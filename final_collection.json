@@ -1,0 +1,1594 @@
+{
+  "info": {
+    "name": "Anmka LMS Flutter App API",
+    "description": "Complete API collection for Anmka LMS Flutter Mobile Application",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://stp.anmka.com/v1",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1️⃣ App Configuration",
+      "item": [
+        {
+          "name": "Get App Config",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/config/app",
+              "host": ["{{baseUrl}}"],
+              "path": ["config", "app"]
+            },
+            "description": "إعدادات التطبيق العامة - يُستدعى عند فتح التطبيق"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"app_name\": \"Anmka LMS\",\n    \"app_name_ar\": \"منصة أنمكا التعليمية\",\n    \"tagline\": \"منصة التعليم الذكية\",\n    \"version\": \"1.0.0\",\n    \"force_update\": false,\n    \"min_version\": \"1.0.0\",\n    \"theme\": {\n      \"primary_color\": \"#7C3AED\",\n      \"secondary_color\": \"#5B21B6\",\n      \"accent_color\": \"#F97316\",\n      \"success_color\": \"#10B981\",\n      \"warning_color\": \"#EAB308\",\n      \"error_color\": \"#EF4444\",\n      \"background_color\": \"#FDF8F3\",\n      \"card_color\": \"#FFFFFF\",\n      \"text_color\": \"#1A1A2E\",\n      \"muted_text_color\": \"#64748B\"\n    },\n    \"features\": {\n      \"purchases_enabled\": true,\n      \"free_mode\": false,\n      \"show_prices\": true,\n      \"show_free_badge\": true,\n      \"live_courses_enabled\": true,\n      \"certificates_enabled\": true,\n      \"exams_enabled\": true,\n      \"downloads_enabled\": true\n    },\n    \"social_links\": {\n      \"facebook\": \"https://facebook.com/anmka\",\n      \"twitter\": \"https://twitter.com/anmka\",\n      \"instagram\": \"https://instagram.com/anmka\",\n      \"youtube\": \"https://youtube.com/anmka\",\n      \"whatsapp\": \"+201234567890\"\n    },\n    \"support\": {\n      \"email\": \"support@anmka-lms.com\",\n      \"phone\": \"+201234567890\",\n      \"whatsapp\": \"+201234567890\"\n    },\n    \"legal\": {\n      \"terms_url\": \"https://anmka-lms.com/terms\",\n      \"privacy_url\": \"https://anmka-lms.com/privacy\"\n    }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2️⃣ Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data && jsonData.data.token) {",
+                  "    pm.collectionVariables.set('accessToken', jsonData.data.token);",
+                  "    pm.collectionVariables.set('refreshToken', jsonData.data.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "تسجيل الدخول"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"user\": {\n      \"id\": \"usr_123456\",\n      \"name\": \"يعقوب أحمد\",\n      \"email\": \"yaqoub@email.com\",\n      \"phone\": \"+201234567890\",\n      \"avatar\": \"https://cdn.anmka-lms.com/avatars/usr_123456.jpg\",\n      \"avatar_thumbnail\": \"https://cdn.anmka-lms.com/avatars/usr_123456_thumb.jpg\",\n      \"role\": \"student\",\n      \"is_verified\": true,\n      \"created_at\": \"2024-01-15T10:30:00Z\"\n    },\n    \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"refresh_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"expires_at\": \"2024-02-15T10:30:00Z\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"يعقوب أحمد\",\n  \"email\": \"yaqoub@email.com\",\n  \"phone\": \"+201234567890\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\",\n  \"accept_terms\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "إنشاء حساب جديد"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 201,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم إنشاء الحساب بنجاح\",\n  \"data\": {\n    \"user\": {\n      \"id\": \"usr_123456\",\n      \"name\": \"يعقوب أحمد\",\n      \"email\": \"yaqoub@email.com\",\n      \"phone\": \"+201234567890\",\n      \"avatar\": null,\n      \"role\": \"student\",\n      \"is_verified\": false,\n      \"created_at\": \"2024-01-15T10:30:00Z\"\n    },\n    \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"refresh_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            },
+            "description": "تسجيل الخروج"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم تسجيل الخروج بنجاح\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/forgot-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "forgot-password"]
+            },
+            "description": "نسيت كلمة المرور"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "description": "تجديد التوكن"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"refresh_token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"expires_at\": \"2024-02-15T10:30:00Z\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3️⃣ Home Page",
+      "item": [
+        {
+          "name": "Get Home Page",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/home",
+              "host": ["{{baseUrl}}"],
+              "path": ["home"]
+            },
+            "description": "بيانات الصفحة الرئيسية"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"user_summary\": {\n      \"name\": \"يعقوب أحمد\",\n      \"avatar\": \"https://cdn.anmka-lms.com/avatars/usr_123456.jpg\",\n      \"enrolled_courses\": 12,\n      \"completed_courses\": 5,\n      \"certificates\": 5,\n      \"total_hours\": 48,\n      \"current_streak\": 7,\n      \"notifications_count\": 3\n    },\n    \"hero_banner\": {\n      \"id\": \"banner_001\",\n      \"title\": \"ابدأ رحلة التعلم\",\n      \"subtitle\": \"اكتشف أكثر من 500 دورة تعليمية\",\n      \"button_text\": \"ابدأ الآن\",\n      \"image\": \"https://cdn.anmka-lms.com/banners/hero_banner.png\",\n      \"is_active\": true\n    },\n    \"categories\": [],\n    \"featured_courses\": [],\n    \"popular_courses\": [],\n    \"continue_learning\": [],\n    \"promotional_banners\": []\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4️⃣ Categories",
+      "item": [
+        {
+          "name": "Get All Categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["categories"]
+            },
+            "description": "جميع التصنيفات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"cat_001\",\n      \"name\": \"التصميم\",\n      \"name_ar\": \"التصميم\",\n      \"name_en\": \"Design\",\n      \"description\": \"تعلم أساسيات ومتقدمات التصميم\",\n      \"icon\": \"https://cdn.anmka-lms.com/icons/categories/design.png\",\n      \"color\": \"#7C3AED\",\n      \"courses_count\": 45,\n      \"students_count\": 12500,\n      \"subcategories\": [],\n      \"order\": 1,\n      \"is_featured\": true,\n      \"is_active\": true\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Category Courses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/categories/:id/courses?page=1&per_page=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["categories", ":id", "courses"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "رقم الصفحة"
+                },
+                {
+                  "key": "per_page",
+                  "value": "20",
+                  "description": "عدد العناصر في الصفحة"
+                },
+                {
+                  "key": "sort",
+                  "value": "newest",
+                  "description": "newest, popular, rating, price_low, price_high"
+                },
+                {
+                  "key": "price",
+                  "value": "all",
+                  "description": "all, free, paid"
+                },
+                {
+                  "key": "level",
+                  "value": "all",
+                  "description": "all, beginner, intermediate, advanced"
+                },
+                {
+                  "key": "subcategory_id",
+                  "value": "",
+                  "description": "تصفية حسب التصنيف الفرعي"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "cat_001"
+                }
+              ]
+            },
+            "description": "كورسات تصنيف معين"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"category\": {\n      \"id\": \"cat_001\",\n      \"name\": \"التصميم\",\n      \"description\": \"تعلم أساسيات ومتقدمات التصميم\",\n      \"courses_count\": 45\n    },\n    \"courses\": []\n  },\n  \"meta\": {\n    \"current_page\": 1,\n    \"per_page\": 20,\n    \"total\": 45,\n    \"total_pages\": 3,\n    \"has_more\": true\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5️⃣ Courses",
+      "item": [
+        {
+          "name": "Get All Courses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/courses?page=1&per_page=20&search=&category_id=",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "20"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "بحث في العنوان والوصف"
+                },
+                {
+                  "key": "category_id",
+                  "value": ""
+                },
+                {
+                  "key": "subcategory_id",
+                  "value": ""
+                },
+                {
+                  "key": "instructor_id",
+                  "value": ""
+                },
+                {
+                  "key": "price",
+                  "value": "all",
+                  "description": "all, free, paid"
+                },
+                {
+                  "key": "level",
+                  "value": "all",
+                  "description": "all, beginner, intermediate, advanced"
+                },
+                {
+                  "key": "sort",
+                  "value": "newest",
+                  "description": "newest, popular, rating, price_low, price_high"
+                },
+                {
+                  "key": "duration",
+                  "value": "all",
+                  "description": "all, short (0-5h), medium (5-20h), long (20h+)"
+                }
+              ]
+            },
+            "description": "جميع الدورات مع الفلاتر"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"crs_001\",\n      \"title\": \"أساسيات تصميم واجهات المستخدم\",\n      \"slug\": \"ui-design-basics\",\n      \"description\": \"تعلم أساسيات تصميم واجهات المستخدم من الصفر\",\n      \"instructor\": {\n        \"id\": \"inst_001\",\n        \"name\": \"أحمد محمد\"\n      },\n      \"thumbnail\": \"https://cdn.anmka-lms.com/courses/crs_001/thumbnail.jpg\",\n      \"rating\": 4.8,\n      \"reviews_count\": 234,\n      \"students_count\": 1250,\n      \"lessons_count\": 22,\n      \"duration_hours\": 72,\n      \"price\": 0,\n      \"original_price\": 500,\n      \"currency\": \"EGP\",\n      \"is_free\": true,\n      \"is_featured\": true,\n      \"progress\": 0,\n      \"is_enrolled\": false\n    }\n  ],\n  \"meta\": {\n    \"current_page\": 1,\n    \"per_page\": 20,\n    \"total\": 150,\n    \"total_pages\": 8,\n    \"has_more\": true\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Course Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/courses/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "crs_001"
+                }
+              ]
+            },
+            "description": "تفاصيل دورة محددة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"crs_001\",\n    \"title\": \"أساسيات تصميم واجهات المستخدم\",\n    \"slug\": \"ui-design-basics\",\n    \"description\": \"تعلم أساسيات تصميم واجهات المستخدم من الصفر\",\n    \"instructor\": {\n      \"id\": \"inst_001\",\n      \"name\": \"أحمد محمد\",\n      \"title\": \"مصمم UI/UX\",\n      \"avatar\": \"https://cdn.anmka-lms.com/instructors/inst_001.jpg\"\n    },\n    \"thumbnail\": \"https://cdn.anmka-lms.com/courses/crs_001/thumbnail.jpg\",\n    \"banner\": \"https://cdn.anmka-lms.com/courses/crs_001/banner.jpg\",\n    \"category\": {\n      \"id\": \"cat_001\",\n      \"name\": \"التصميم\"\n    },\n    \"level\": \"beginner\",\n    \"rating\": 4.8,\n    \"reviews_count\": 234,\n    \"students_count\": 1250,\n    \"lessons_count\": 22,\n    \"duration_hours\": 72,\n    \"price\": 0,\n    \"original_price\": 500,\n    \"currency\": \"EGP\",\n    \"is_free\": true,\n    \"is_featured\": true,\n    \"has_certificate\": true,\n    \"requirements\": [],\n    \"what_you_learn\": [],\n    \"curriculum\": [],\n    \"progress\": 0,\n    \"is_enrolled\": false,\n    \"is_wishlisted\": false\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Lesson Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/courses/:courseId/lessons/:lessonId",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses", ":courseId", "lessons", ":lessonId"],
+              "variable": [
+                {
+                  "key": "courseId",
+                  "value": "crs_001"
+                },
+                {
+                  "key": "lessonId",
+                  "value": "les_001"
+                }
+              ]
+            },
+            "description": "تفاصيل درس محدد"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"les_001\",\n    \"course_id\": \"crs_001\",\n    \"title\": \"مقدمة الدورة\",\n    \"description\": \"في هذا الدرس سنتعرف على محتوى الدورة وما ستتعلمه\",\n    \"order\": 1,\n    \"type\": \"video\",\n    \"duration_minutes\": 5,\n    \"video\": {\n      \"youtube_id\": \"AevtORdu4pc\",\n      \"quality_options\": [\"1080p\", \"720p\", \"480p\", \"360p\"]\n    },\n    \"is_free\": true,\n    \"is_preview\": true,\n    \"is_completed\": false,\n    \"is_locked\": false,\n    \"resources\": [],\n    \"navigation\": {\n      \"previous_lesson\": null,\n      \"next_lesson\": {\n        \"id\": \"les_002\",\n        \"title\": \"ما هو تصميم واجهات المستخدم؟\"\n      }\n    },\n    \"progress\": {\n      \"watched_seconds\": 0,\n      \"total_seconds\": 300,\n      \"percentage\": 0\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Lesson Progress",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"watched_seconds\": 150,\n  \"is_completed\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/courses/:courseId/lessons/:lessonId/progress",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses", ":courseId", "lessons", ":lessonId", "progress"],
+              "variable": [
+                {
+                  "key": "courseId",
+                  "value": "crs_001"
+                },
+                {
+                  "key": "lessonId",
+                  "value": "les_001"
+                }
+              ]
+            },
+            "description": "تحديث تقدم الدرس"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"lesson_progress\": {\n      \"watched_seconds\": 150,\n      \"total_seconds\": 300,\n      \"percentage\": 50,\n      \"is_completed\": false\n    },\n    \"course_progress\": {\n      \"completed_lessons\": 5,\n      \"total_lessons\": 22,\n      \"percentage\": 23\n    }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6️⃣ Enrollment",
+      "item": [
+        {
+          "name": "Enroll in Course",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/courses/:id/enroll",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses", ":id", "enroll"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "crs_001"
+                }
+              ]
+            },
+            "description": "الاشتراك في دورة مجانية"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم الاشتراك في الدورة بنجاح\",\n  \"data\": {\n    \"enrollment_id\": \"enr_001\",\n    \"course_id\": \"crs_001\",\n    \"enrolled_at\": \"2024-01-15T10:30:00Z\",\n    \"expires_at\": null,\n    \"progress\": 0\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get My Enrollments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/enrollments?status=all&page=1&per_page=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["enrollments"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "all",
+                  "description": "all, in_progress, completed"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "الدورات المشترك بها"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"enr_001\",\n      \"course\": {\n        \"id\": \"crs_001\",\n        \"title\": \"أساسيات تصميم واجهات المستخدم\",\n        \"thumbnail\": \"https://cdn.anmka-lms.com/courses/crs_001/thumbnail.jpg\",\n        \"instructor\": {\n          \"id\": \"inst_001\",\n          \"name\": \"أحمد محمد\"\n        },\n        \"duration_hours\": 72,\n        \"lessons_count\": 22,\n        \"rating\": 4.8\n      },\n      \"progress\": 45,\n      \"completed_lessons\": 10,\n      \"total_lessons\": 22,\n      \"enrolled_at\": \"2024-01-10T08:00:00Z\",\n      \"status\": \"in_progress\"\n    }\n  ],\n  \"meta\": {\n    \"total_enrolled\": 12,\n    \"in_progress\": 7,\n    \"completed\": 5\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7️⃣ Payments & Checkout",
+      "item": [
+        {
+          "name": "Initiate Checkout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"course_id\": \"crs_002\",\n  \"payment_method\": \"card\",\n  \"coupon_code\": \"DISCOUNT20\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "payments"]
+            },
+            "description": "إنشاء عملية دفع جديدة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"checkout_session_id\": \"chk_001\",\n    \"course\": {\n      \"id\": \"crs_002\",\n      \"title\": \"البرمجة بلغة بايثون للمبتدئين\",\n      \"price\": 500,\n      \"currency\": \"EGP\"\n    },\n    \"pricing\": {\n      \"original_price\": 500,\n      \"discount_amount\": 100,\n      \"coupon_discount\": 80,\n      \"final_price\": 320,\n      \"currency\": \"EGP\"\n    },\n    \"payment_methods\": [],\n    \"expires_at\": \"2024-01-15T11:30:00Z\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Complete Checkout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"checkout_session_id\": \"chk_001\",\n  \"payment_method\": \"card\",\n  \"payment_token\": \"tok_xxx\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/payments/:id/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "payments", ":id", "confirm"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "pay_001"
+                }
+              ]
+            },
+            "description": "تأكيد عملية الدفع"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تمت عملية الشراء بنجاح\",\n  \"data\": {\n    \"order_id\": \"ord_001\",\n    \"enrollment_id\": \"enr_002\",\n    \"course\": {\n      \"id\": \"crs_002\",\n      \"title\": \"البرمجة بلغة بايثون للمبتدئين\"\n    },\n    \"payment\": {\n      \"amount\": 320,\n      \"currency\": \"EGP\",\n      \"method\": \"card\",\n      \"status\": \"completed\",\n      \"transaction_id\": \"txn_xxx\"\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Validate Coupon",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"DISCOUNT20\",\n  \"course_id\": \"crs_002\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/payments/coupons/validate",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "payments", "coupons", "validate"]
+            },
+            "description": "التحقق من كوبون"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"is_valid\": true,\n    \"code\": \"DISCOUNT20\",\n    \"discount_type\": \"percentage\",\n    \"discount_value\": 20,\n    \"discount_amount\": 100,\n    \"final_price\": 400,\n    \"message\": \"تم تطبيق الخصم بنجاح\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8️⃣ Exams",
+      "item": [
+        {
+          "name": "Get Exam Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/exams/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "exams", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "exam_001"
+                }
+              ]
+            },
+            "description": "بيانات الامتحان"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"exam_001\",\n    \"course_id\": \"crs_001\",\n    \"type\": \"trial\",\n    \"title\": \"امتحان تجريبي\",\n    \"description\": \"اختبر معلوماتك قبل البدء في الدورة\",\n    \"questions_count\": 10,\n    \"duration_minutes\": 15,\n    \"passing_score\": 70,\n    \"attempts_allowed\": 0,\n    \"attempts_used\": 0,\n    \"best_score\": null,\n    \"is_passed\": false,\n    \"can_start\": true\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Start Exam",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/exams/:id/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "exams", ":id", "start"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "exam_001"
+                }
+              ]
+            },
+            "description": "بدء الامتحان - ملاحظة: يحتاج تطوير في الـ Backend"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"attempt_id\": \"att_001\",\n    \"exam_id\": \"exam_001\",\n    \"started_at\": \"2024-01-15T10:30:00Z\",\n    \"ends_at\": \"2024-01-15T10:45:00Z\",\n    \"duration_minutes\": 15,\n    \"questions\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Submit Exam",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"attempt_id\": \"att_001\",\n  \"answers\": [\n    {\n      \"question_id\": \"q_001\",\n      \"selected_options\": [\"opt_001\"]\n    },\n    {\n      \"question_id\": \"q_002\",\n      \"selected_options\": [\"opt_005\", \"opt_007\", \"opt_008\"]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/exams/:id/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "exams", ":id", "submit"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "exam_001"
+                }
+              ]
+            },
+            "description": "تسليم الامتحان - ملاحظة: يحتاج تطوير في الـ Backend"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"attempt_id\": \"att_001\",\n    \"score\": 85,\n    \"passing_score\": 70,\n    \"is_passed\": true,\n    \"correct_answers\": 8,\n    \"total_questions\": 10,\n    \"time_taken_minutes\": 12,\n    \"results\": [],\n    \"certificate_unlocked\": false,\n    \"message\": \"أحسنت! لقد اجتزت الامتحان بنجاح\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get My Exams",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/exams",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "exams"]
+            },
+            "description": "جميع الاختبارات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"upcoming\": [],\n    \"completed\": []\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9️⃣ Certificates",
+      "item": [
+        {
+          "name": "Get My Certificates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/certificates",
+              "host": ["{{baseUrl}}"],
+              "path": ["certificates"]
+            },
+            "description": "جميع الشهادات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"cert_001\",\n      \"course\": {\n        \"id\": \"crs_001\",\n        \"title\": \"أساسيات تصميم واجهات المستخدم\",\n        \"thumbnail\": \"https://cdn.anmka-lms.com/courses/crs_001/thumbnail.jpg\",\n        \"instructor\": {\n          \"name\": \"أحمد محمد\"\n        }\n      },\n      \"certificate_number\": \"ANMKA-2024-001234\",\n      \"student_name\": \"يعقوب أحمد\",\n      \"issue_date\": \"2024-01-15T10:30:00Z\",\n      \"preview_url\": \"https://cdn.anmka-lms.com/certificates/cert_001_preview.jpg\",\n      \"download_url\": \"https://cdn.anmka-lms.com/certificates/cert_001.pdf\",\n      \"share_url\": \"https://anmka-lms.com/verify/ANMKA-2024-001234\",\n      \"is_verified\": true\n    }\n  ],\n  \"meta\": {\n    \"total\": 5\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Verify Certificate",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/certificates/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "certificates", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "cert_001"
+                }
+              ]
+            },
+            "description": "عرض تفاصيل شهادة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"is_valid\": true,\n    \"certificate_number\": \"ANMKA-2024-001234\",\n    \"student_name\": \"يعقوب أحمد\",\n    \"course_title\": \"أساسيات تصميم واجهات المستخدم\",\n    \"issue_date\": \"15 يناير 2024\",\n    \"issuer\": \"Anmka LMS\",\n    \"verification_url\": \"https://anmka-lms.com/verify/ANMKA-2024-001234\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🔟 Live Courses",
+      "item": [
+        {
+          "name": "Get Live Courses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/live-courses",
+              "host": ["{{baseUrl}}"],
+              "path": ["live-courses"]
+            },
+            "description": "الجلسات اللايف"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"upcoming\": [],\n    \"live_now\": [],\n    \"past\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Register for Live Course",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/live-sessions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "live-sessions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "live_001"
+                }
+              ]
+            },
+            "description": "تفاصيل جلسة لايف"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم التسجيل بنجاح\",\n  \"data\": {\n    \"registration_id\": \"reg_001\",\n    \"live_course_id\": \"live_001\",\n    \"join_url\": \"https://zoom.us/j/xxx\",\n    \"reminder_set\": true\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1️⃣1️⃣ Notifications",
+      "item": [
+        {
+          "name": "Get Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications?page=1&per_page=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "20"
+                },
+                {
+                  "key": "unread_only",
+                  "value": "false",
+                  "description": "true/false"
+                }
+              ]
+            },
+            "description": "الإشعارات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"notif_001\",\n      \"type\": \"course_update\",\n      \"title\": \"درس جديد متاح\",\n      \"body\": \"تم إضافة درس جديد في دورة تصميم واجهات المستخدم\",\n      \"icon\": \"book\",\n      \"color\": \"#7C3AED\",\n      \"action_type\": \"navigate\",\n      \"action_value\": \"/courses/crs_001/lessons/les_023\",\n      \"is_read\": false,\n      \"created_at\": \"2024-01-15T10:30:00Z\"\n    }\n  ],\n  \"meta\": {\n    \"total\": 25,\n    \"unread_count\": 3\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Mark Notification as Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/:id/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", ":id", "read"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "notif_001"
+                }
+              ]
+            },
+            "description": "تحديد الإشعار كمقروء"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"unread_count\": 2\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Mark All Notifications as Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "read-all"]
+            },
+            "description": "تحديد جميع الإشعارات كمقروءة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"marked_count\": 3,\n    \"unread_count\": 0\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1️⃣2️⃣ User Profile",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "me"]
+            },
+            "description": "الملف الشخصي"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"usr_123456\",\n    \"name\": \"يعقوب أحمد\",\n    \"email\": \"yaqoub@email.com\",\n    \"phone\": \"+201234567890\",\n    \"avatar\": \"https://cdn.anmka-lms.com/avatars/usr_123456.jpg\",\n    \"bio\": \"طالب شغوف بالتعلم\",\n    \"country\": \"EG\",\n    \"country_name\": \"مصر\",\n    \"timezone\": \"Africa/Cairo\",\n    \"language\": \"ar\",\n    \"is_verified\": true,\n    \"statistics\": {\n      \"enrolled_courses\": 12,\n      \"completed_courses\": 5,\n      \"certificates_earned\": 5,\n      \"total_learning_hours\": 48\n    },\n    \"preferences\": {\n      \"email_notifications\": true,\n      \"push_notifications\": true\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"يعقوب أحمد\",\n  \"phone\": \"+201234567890\",\n  \"bio\": \"طالب شغوف بالتعلم والتطوير\",\n  \"country\": \"EG\",\n  \"timezone\": \"Africa/Cairo\",\n  \"language\": \"ar\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "تحديث الملف الشخصي"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم تحديث الملف الشخصي بنجاح\",\n  \"data\": {}\n}"
+            }
+          ]
+        },
+        {
+          "name": "Upload Avatar",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "avatar",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "تحديث الملف الشخصي مع الصورة - ملاحظة: يحتاج تطوير endpoint خاص للصور"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"avatar\": \"https://cdn.anmka-lms.com/avatars/usr_123456.jpg\",\n    \"avatar_thumbnail\": \"https://cdn.anmka-lms.com/avatars/usr_123456_thumb.jpg\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"oldpassword123\",\n  \"new_password\": \"newpassword123\",\n  \"new_password_confirmation\": \"newpassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/change-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "change-password"]
+            },
+            "description": "تغيير كلمة المرور"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم تغيير كلمة المرور بنجاح\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Preferences",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email_notifications\": true,\n  \"push_notifications\": true,\n  \"marketing_emails\": false,\n  \"course_reminders\": true,\n  \"exam_reminders\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "تحديث التفضيلات - يتم عبر تحديث الملف الشخصي"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم تحديث التفضيلات بنجاح\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1️⃣3️⃣ Downloads",
+      "item": [
+        {
+          "name": "Get Downloads",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/curriculum",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "curriculum"]
+            },
+            "description": "الملفات والمحتوى - ملاحظة: يحتاج تطوير endpoint للتحميلات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"storage_used_mb\": 125.5,\n    \"storage_limit_mb\": 500,\n    \"storage_percentage\": 25,\n    \"files\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Download File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resource_id\": \"res_002\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/curriculum",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "curriculum"]
+            },
+            "description": "تحميل ملف - ملاحظة: يحتاج تطوير endpoint للتحميلات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"download_url\": \"https://cdn.anmka-lms.com/courses/crs_001/resources/res_002.zip\",\n    \"expires_at\": \"2024-01-15T11:30:00Z\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Download",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/curriculum/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "curriculum", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "dl_001"
+                }
+              ]
+            },
+            "description": "حذف ملف - ملاحظة: يحتاج تطوير endpoint للتحميلات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم حذف الملف بنجاح\",\n  \"data\": {\n    \"storage_used_mb\": 123,\n    \"storage_freed_mb\": 2.5\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1️⃣4️⃣ Search",
+      "item": [
+        {
+          "name": "Search",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/search?q=&type=all&page=1&per_page=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["search"],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "كلمة البحث"
+                },
+                {
+                  "key": "type",
+                  "value": "all",
+                  "description": "all, courses, instructors, categories"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "البحث العام"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"query\": \"تصميم\",\n    \"courses\": [],\n    \"instructors\": [],\n    \"categories\": []\n  },\n  \"meta\": {\n    \"total_results\": 50,\n    \"courses_count\": 35,\n    \"instructors_count\": 10,\n    \"categories_count\": 5\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1️⃣5️⃣ Reviews",
+      "item": [
+        {
+          "name": "Get Course Reviews",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/courses/:id/reviews?page=1&per_page=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses", ":id", "reviews"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "per_page",
+                  "value": "20"
+                },
+                {
+                  "key": "rating",
+                  "value": "",
+                  "description": "1-5 للتصفية حسب التقييم"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "crs_001"
+                }
+              ]
+            },
+            "description": "تقييمات الدورة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"rev_001\",\n      \"user\": {\n        \"id\": \"usr_789\",\n        \"name\": \"محمد سعيد\",\n        \"avatar\": \"https://cdn.anmka-lms.com/avatars/usr_789.jpg\"\n      },\n      \"rating\": 5,\n      \"title\": \"دورة ممتازة\",\n      \"comment\": \"دورة رائعة ومحتوى مميز\",\n      \"is_verified_purchase\": true,\n      \"helpful_count\": 15,\n      \"created_at\": \"2024-01-10T08:00:00Z\"\n    }\n  ],\n  \"meta\": {\n    \"total\": 234,\n    \"average_rating\": 4.8,\n    \"rating_distribution\": {\n      \"5\": 180,\n      \"4\": 35,\n      \"3\": 12,\n      \"2\": 5,\n      \"1\": 2\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 5,\n  \"title\": \"دورة ممتازة\",\n  \"comment\": \"دورة رائعة ومحتوى مميز.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/courses/:id/reviews",
+              "host": ["{{baseUrl}}"],
+              "path": ["courses", ":id", "reviews"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "crs_001"
+                }
+              ]
+            },
+            "description": "إضافة تقييم"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تم إضافة تقييمك بنجاح\",\n  \"data\": {\n    \"id\": \"rev_002\",\n    \"rating\": 5,\n    \"title\": \"دورة ممتازة\",\n    \"comment\": \"دورة رائعة ومحتوى مميز.\",\n    \"created_at\": \"2024-01-15T10:30:00Z\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Mark Review as Helpful",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/courses/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "courses", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "crs_001"
+                }
+              ]
+            },
+            "description": "تحديد التقييم كمفيد - ملاحظة: يحتاج تطوير endpoint للتقييمات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"helpful_count\": 16,\n    \"is_helpful_by_me\": true\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1️⃣6️⃣ Wishlist",
+      "item": [
+        {
+          "name": "Get Wishlist",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wishlist",
+              "host": ["{{baseUrl}}"],
+              "path": ["wishlist"]
+            },
+            "description": "قائمة الرغبات"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"wish_001\",\n      \"course\": {\n        \"id\": \"crs_003\",\n        \"title\": \"تطوير تطبيقات Flutter\",\n        \"thumbnail\": \"https://cdn.anmka-lms.com/courses/crs_003/thumbnail.jpg\",\n        \"instructor\": {\n          \"name\": \"خالد سعيد\"\n        },\n        \"rating\": 4.9,\n        \"price\": 750,\n        \"original_price\": 1000,\n        \"currency\": \"EGP\",\n        \"is_free\": false\n      },\n      \"added_at\": \"2024-01-10T08:00:00Z\"\n    }\n  ],\n  \"meta\": {\n    \"total\": 5\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add to Wishlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"course_id\": \"crs_003\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/wishlist",
+              "host": ["{{baseUrl}}"],
+              "path": ["wishlist"]
+            },
+            "description": "إضافة للقائمة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تمت الإضافة إلى قائمة الرغبات\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Remove from Wishlist",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wishlist/:courseId",
+              "host": ["{{baseUrl}}"],
+              "path": ["wishlist", ":courseId"],
+              "variable": [
+                {
+                  "key": "courseId",
+                  "value": "crs_003"
+                }
+              ]
+            },
+            "description": "إزالة من القائمة"
+          },
+          "response": [
+            {
+              "name": "Success Response",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"success\": true,\n  \"message\": \"تمت الإزالة من قائمة الرغبات\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

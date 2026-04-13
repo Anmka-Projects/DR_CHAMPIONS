@@ -1,0 +1,259 @@
+{
+  "description": "API Response Examples for Teachers Endpoints",
+  "base_url": "https://stp.anmka.com/v1",
+  
+  "endpoints": {
+    "get_all_teachers": {
+      "method": "GET",
+      "url": "/v1/teachers",
+      "query_params": {
+        "page": "1",
+        "per_page": "20",
+        "search": "optional - search by name or title",
+        "sort": "rating | students | newest"
+      },
+      "response_example": {
+        "success": true,
+        "message": "Teachers retrieved successfully",
+        "data": {
+          "teachers": [
+            {
+              "id": "t1",
+              "name": "أ. محمد علي",
+              "name_en": "Mohamed Ali",
+              "title": "خبير رياضيات",
+              "title_en": "Math Expert",
+              "avatar": "/storage/teachers/avatar_1.jpg",
+              "bio": "أكثر من 10 سنوات خبرة في تدريس الرياضيات لطلاب الثانوية والجامعة مع أسلوب مبسط.",
+              "bio_en": "More than 10 years of experience teaching mathematics to high school and university students with a simplified approach.",
+              "rating": 4.9,
+              "students": 3200,
+              "courses_count": 5,
+              "created_at": "2024-01-15T10:30:00Z",
+              "updated_at": "2024-12-20T15:45:00Z"
+            },
+            {
+              "id": "t2",
+              "name": "أ. سارة إبراهيم",
+              "name_en": "Sara Ibrahim",
+              "title": "متخصصة لغات",
+              "title_en": "Language Specialist",
+              "avatar": "/storage/teachers/avatar_2.jpg",
+              "bio": "مدربة لغة إنجليزية معتمدة، تركز على المحادثة العملية وبناء الثقة في التواصل.",
+              "bio_en": "Certified English language trainer, focusing on practical conversation and building confidence in communication.",
+              "rating": 4.8,
+              "students": 4100,
+              "courses_count": 8,
+              "created_at": "2024-02-10T09:15:00Z",
+              "updated_at": "2024-12-18T11:20:00Z"
+            }
+          ],
+          "meta": {
+            "current_page": 1,
+            "per_page": 20,
+            "total": 45,
+            "last_page": 3,
+            "from": 1,
+            "to": 20
+          }
+        }
+      },
+      "alternative_response_direct_list": {
+        "success": true,
+        "message": "Teachers retrieved successfully",
+        "data": [
+          {
+            "id": "t1",
+            "name": "أ. محمد علي",
+            "title": "خبير رياضيات",
+            "avatar": "/storage/teachers/avatar_1.jpg",
+            "bio": "أكثر من 10 سنوات خبرة في تدريس الرياضيات",
+            "rating": 4.9,
+            "students": 3200,
+            "courses_count": 5
+          }
+        ]
+      }
+    },
+    
+    "get_teacher_details": {
+      "method": "GET",
+      "url": "/v1/teachers/{id}",
+      "path_params": {
+        "id": "teacher_id"
+      },
+      "response_example": {
+        "success": true,
+        "message": "Teacher details retrieved successfully",
+        "data": {
+          "id": "t1",
+          "name": "أ. محمد علي",
+          "name_en": "Mohamed Ali",
+          "title": "خبير رياضيات",
+          "title_en": "Math Expert",
+          "avatar": "/storage/teachers/avatar_1.jpg",
+          "bio": "أكثر من 10 سنوات خبرة في تدريس الرياضيات لطلاب الثانوية والجامعة مع أسلوب مبسط. حاصل على درجة الماجستير في الرياضيات التطبيقية من جامعة القاهرة.",
+          "bio_en": "More than 10 years of experience teaching mathematics to high school and university students with a simplified approach. Holds a Master's degree in Applied Mathematics from Cairo University.",
+          "rating": 4.9,
+          "students": 3200,
+          "courses_count": 5,
+          "courses": [
+            {
+              "id": "c1",
+              "title": "أساسيات الجبر",
+              "title_en": "Algebra Basics",
+              "thumbnail": "/storage/courses/thumb_1.jpg",
+              "image": "/storage/courses/image_1.jpg",
+              "duration": "12 س",
+              "duration_hours": 12,
+              "students": 1200,
+              "students_count": 1200,
+              "rating": 4.8,
+              "price": 299.99,
+              "is_free": false,
+              "category": {
+                "id": "cat1",
+                "name": "الرياضيات",
+                "name_en": "Mathematics"
+              },
+              "instructor": {
+                "id": "t1",
+                "name": "أ. محمد علي",
+                "avatar": "/storage/teachers/avatar_1.jpg"
+              }
+            },
+            {
+              "id": "c2",
+              "title": "التفاضل والتكامل المتقدم",
+              "title_en": "Advanced Calculus",
+              "thumbnail": "/storage/courses/thumb_2.jpg",
+              "image": "/storage/courses/image_2.jpg",
+              "duration": "18 س",
+              "duration_hours": 18,
+              "students": 980,
+              "students_count": 980,
+              "rating": 4.9,
+              "price": 399.99,
+              "is_free": false,
+              "category": {
+                "id": "cat1",
+                "name": "الرياضيات",
+                "name_en": "Mathematics"
+              },
+              "instructor": {
+                "id": "t1",
+                "name": "أ. محمد علي",
+                "avatar": "/storage/teachers/avatar_1.jpg"
+              }
+            }
+          ],
+          "created_at": "2024-01-15T10:30:00Z",
+          "updated_at": "2024-12-20T15:45:00Z"
+        }
+      }
+    },
+    
+    "get_teacher_courses": {
+      "method": "GET",
+      "url": "/v1/teachers/{id}/courses",
+      "path_params": {
+        "id": "teacher_id"
+      },
+      "query_params": {
+        "page": "1",
+        "per_page": "20"
+      },
+      "response_example": {
+        "success": true,
+        "message": "Teacher courses retrieved successfully",
+        "data": {
+          "courses": [
+            {
+              "id": "c1",
+              "title": "أساسيات الجبر",
+              "title_en": "Algebra Basics",
+              "thumbnail": "/storage/courses/thumb_1.jpg",
+              "image": "/storage/courses/image_1.jpg",
+              "duration": "12 س",
+              "duration_hours": 12,
+              "students": 1200,
+              "students_count": 1200,
+              "rating": 4.8,
+              "price": 299.99,
+              "is_free": false,
+              "category": {
+                "id": "cat1",
+                "name": "الرياضيات",
+                "name_en": "Mathematics"
+              }
+            }
+          ],
+          "meta": {
+            "current_page": 1,
+            "per_page": 20,
+            "total": 5,
+            "last_page": 1,
+            "from": 1,
+            "to": 5
+          }
+        }
+      },
+      "alternative_response_direct_list": {
+        "success": true,
+        "message": "Teacher courses retrieved successfully",
+        "data": [
+          {
+            "id": "c1",
+            "title": "أساسيات الجبر",
+            "thumbnail": "/storage/courses/thumb_1.jpg",
+            "duration": "12 س",
+            "students": 1200,
+            "rating": 4.8
+          }
+        ]
+      }
+    }
+  },
+  
+  "error_responses": {
+    "teacher_not_found": {
+      "success": false,
+      "message": "Teacher not found",
+      "error": "TEACHER_NOT_FOUND",
+      "data": null
+    },
+    "unauthorized": {
+      "success": false,
+      "message": "Unauthorized. Please login.",
+      "error": "UNAUTHORIZED",
+      "data": null
+    },
+    "validation_error": {
+      "success": false,
+      "message": "Validation failed",
+      "error": "VALIDATION_ERROR",
+      "errors": {
+        "page": ["The page must be a positive integer."],
+        "per_page": ["The per page must be between 1 and 100."]
+      },
+      "data": null
+    }
+  },
+  
+  "notes": {
+    "image_urls": "All image paths (avatar, thumbnail, image) should be relative paths. The client will automatically prepend the base URL (https://stp.anmka.com) to create full URLs.",
+    "localization": "Fields with '_en' suffix are English translations. The app uses Arabic as primary language.",
+    "pagination": "When pagination is used, the response includes a 'meta' object with pagination information. If not paginated, 'data' can be a direct array.",
+    "courses_in_teacher_details": "The 'courses' array in teacher details can be a simplified list or full course objects. The app handles both cases.",
+    "required_fields": {
+      "teacher_list_item": ["id", "name", "title", "avatar", "rating", "students", "courses_count"],
+      "teacher_details": ["id", "name", "title", "avatar", "bio", "rating", "students", "courses"],
+      "course_in_teacher": ["id", "title", "thumbnail", "duration", "students"]
+    },
+    "optional_fields": {
+      "teacher": ["name_en", "title_en", "bio_en", "created_at", "updated_at"],
+      "course": ["title_en", "image", "duration_hours", "rating", "price", "is_free", "category", "instructor"]
+    }
+  }
+}
+

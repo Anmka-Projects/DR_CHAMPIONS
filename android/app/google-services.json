@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "322915697",
+    "project_id": "dr-champions-18186",
+    "storage_bucket": "dr-champions-18186.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:322915697:android:86f73233f2d9b52c713ad0",
+        "android_client_info": {
+          "package_name": "com.anmka.drchampions"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "322915697-iiklmhs5ifb0jn3eva9n0sj0scp65c7m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.anmka.drchampions",
+            "certificate_hash": "d19172dae60d5d342bcdd5c9c57e331a58a0c6b4"
+          }
+        },
+        {
+          "client_id": "322915697-tav8lgdjc4b8g6lm5r72gfa3gi38ovte.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDvrjTAumt14-emEkmGPvwwnfjikytZI5g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "322915697-tav8lgdjc4b8g6lm5r72gfa3gi38ovte.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

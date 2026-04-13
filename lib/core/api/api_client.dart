@@ -641,7 +641,20 @@ class ApiClient {
       }
 
       if (kDebugMode) {
-        print('❌ Error Response Body: ${response.body}');
+        final body = response.body;
+        final trimmed = body.trimLeft();
+        final looksLikeHtml = trimmed.startsWith('<!') ||
+            trimmed.startsWith('<html') ||
+            body.contains('DOCTYPE html');
+        if (looksLikeHtml) {
+          print(
+            '❌ Error Response: HTTP ${response.statusCode} — body is HTML '
+            '(likely frontend 404; API route missing or wrong URL). '
+            'First 120 chars: ${body.length > 120 ? body.substring(0, 120) : body}…',
+          );
+        } else {
+          print('❌ Error Response Body: $body');
+        }
       }
 
       if (response.statusCode == 401) {

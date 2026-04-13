@@ -97,6 +97,10 @@ class ApiEndpoints {
       '$baseUrl/courses/$courseId/exams';
   static String courseExamDetails(String courseId, String examId) =>
       '$baseUrl/courses/$courseId/exams/$examId';
+  static String courseAssignments(String courseId) =>
+      '$baseUrl/courses/$courseId/assignments';
+  static String courseAssignmentDetails(String courseId, String assignmentId) =>
+      '$baseUrl/courses/$courseId/assignments/$assignmentId';
 
   // Certificates
   static String get certificates => '$baseUrl/certificates';

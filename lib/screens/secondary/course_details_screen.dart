@@ -112,6 +112,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   bool _isEnrolled = false;
   Map<String, dynamic>? _courseData;
   List<Map<String, dynamic>> _courseExams = [];
+  List<Map<String, dynamic>> _courseAssignments = [];
   bool _isLoadingExams = false;
   bool _isInWishlist = false;
   bool _isTogglingWishlist = false;
@@ -121,7 +122,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadCourseDetails();
     _checkWishlistStatus();
   }
@@ -324,6 +325,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                 courseDetails['is_in_wishlist'] == true;
             _isLoading = false;
           });
+          _loadCourseAssignments();
           _loadCourseExams();
           _checkWishlistStatus();
           _checkIfViewingOwnCourse(courseDetails);
@@ -344,18 +346,21 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
             _courseData = widget.course; // Fallback to provided course
             _isLoading = false;
           });
+          _loadCourseAssignments();
           _checkIfViewingOwnCourse(widget.course);
         }
       } else {
         setState(() {
           _courseData = widget.course;
         });
+        _loadCourseAssignments();
         _checkIfViewingOwnCourse(widget.course);
       }
     } else {
       setState(() {
         _courseData = widget.course;
       });
+      _loadCourseAssignments();
       _checkIfViewingOwnCourse(widget.course);
     }
   }
@@ -483,6 +488,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                         controller: _tabController,
                         children: [
                           _buildLessonsTab(),
+                          _buildAssignmentsTab(),
                           _buildAboutTab(course),
                           _buildExamsTab(),
                         ],
@@ -909,10 +915,35 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         padding: const EdgeInsets.all(4),
         tabs: [
           Tab(text: l10n.lessons),
+          Tab(
+            text: Localizations.localeOf(context).languageCode == 'ar'
+                ? 'الواجبات'
+                : 'Assignments',
+          ),
           Tab(text: l10n.about),
           Tab(text: l10n.exams),
         ],
       ),
+    );
+  }
+
+  Widget _buildAssignmentsTab() {
+    if (_courseAssignments.isEmpty) {
+      return _buildEmptyState(
+        Localizations.localeOf(context).languageCode == 'ar'
+            ? 'لا توجد واجبات حاليا'
+            : 'No assignments yet',
+        Icons.assignment_rounded,
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      physics: const BouncingScrollPhysics(),
+      itemCount: _courseAssignments.length,
+      itemBuilder: (context, index) {
+        return _buildAssignmentItem(_courseAssignments[index]);
+      },
     );
   }
 
@@ -1071,6 +1102,12 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       required int indent,
       String? moduleKey,
     }) {
+      final lessonType = lesson['type']?.toString().toLowerCase();
+      if (lessonType == 'assignment' ||
+          lessonType == 'homework' ||
+          lessonType == 'task') {
+        return;
+      }
       flatLessonsList.add(lesson);
       modulesList.add({
         'type': 'lesson',
@@ -1573,6 +1610,225 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildAssignmentItem(Map<String, dynamic> assignment) {
+    final isLocked =
+        assignment['is_locked'] == true || assignment['locked'] == true;
+    final title = assignment['title']?.toString() ??
+        (Localizations.localeOf(context).languageCode == 'ar'
+            ? 'واجب'
+            : 'Assignment');
+    final description = assignment['description']?.toString() ?? '';
+
+    return GestureDetector(
+      onTap: isLocked
+          ? () => _handlePaidCourseCheckout(_courseData ?? widget.course)
+          : () => _openAssignmentDetails(assignment),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12, left: 16),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isLocked ? Colors.grey[50] : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.grey.withOpacity(0.15),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.purple.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.assignment_rounded,
+                color: AppColors.purple,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.foreground,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (description.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        color: AppColors.mutedForeground,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Icon(
+              isLocked ? Icons.lock_rounded : Icons.chevron_right_rounded,
+              color: AppColors.mutedForeground,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAssignmentDetails(Map<String, dynamic> assignment) async {
+    final course = _courseData ?? widget.course;
+    final courseId = course?['id']?.toString();
+    final assignmentId = assignment['id']?.toString();
+    if (courseId == null ||
+        courseId.isEmpty ||
+        assignmentId == null ||
+        assignmentId.isEmpty) {
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: AppColors.purple),
+      ),
+    );
+
+    try {
+      final details = await CoursesService.instance
+          .getCourseAssignmentDetails(courseId, assignmentId);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      final title = details['title']?.toString() ??
+          assignment['title']?.toString() ??
+          (Localizations.localeOf(context).languageCode == 'ar'
+              ? 'تفاصيل الواجب'
+              : 'Assignment Details');
+      final description = details['description']?.toString() ??
+          assignment['description']?.toString() ??
+          '';
+      final dueDate = details['due_date']?.toString() ?? '';
+      final submission =
+          (details['my_submission'] ?? details['submission']) as Map?;
+      final status = submission?['status']?.toString();
+      final score = submission?['score']?.toString();
+      final teacherNote = submission?['teacher_note']?.toString();
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (ctx) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.cairo(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                    if (dueDate.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '${Localizations.localeOf(context).languageCode == 'ar' ? 'موعد التسليم' : 'Due date'}: $dueDate',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Text(
+                      description.isEmpty
+                          ? (Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'لا يوجد وصف'
+                              : 'No description')
+                          : description,
+                      style: GoogleFonts.cairo(
+                        fontSize: 14,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                    if (status != null && status.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        '${Localizations.localeOf(context).languageCode == 'ar' ? 'الحالة' : 'Status'}: $status',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.purple,
+                        ),
+                      ),
+                    ],
+                    if (score != null && score.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '${Localizations.localeOf(context).languageCode == 'ar' ? 'الدرجة' : 'Score'}: $score',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          color: AppColors.foreground,
+                        ),
+                      ),
+                    ],
+                    if (teacherNote != null && teacherNote.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '${Localizations.localeOf(context).languageCode == 'ar' ? 'ملاحظة المعلم' : 'Teacher note'}: $teacherNote',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst('Exception: ', ''),
+            style: GoogleFonts.cairo(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   String _formatDuration(Map<String, dynamic> lesson) {
@@ -2625,7 +2881,20 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     setState(() => _isLoadingExams = true);
 
     try {
-      final exams = await ExamsService.instance.getCourseExams(courseId);
+      List<Map<String, dynamic>> exams = [];
+      try {
+        exams = await ExamsService.instance.getCourseExams(courseId);
+      } catch (e) {
+        // Keep assignments visible even when exams endpoint fails.
+        if (kDebugMode) {
+          print('⚠️ getCourseExams failed, will fallback to course assignments: $e');
+        }
+      }
+
+      final assignments = _courseAssignments.isNotEmpty
+          ? _courseAssignments
+          : _extractAssignmentsFromCourse(course);
+      final mergedAssessments = _mergeAssessments(exams, assignments);
 
       // Print detailed response
       if (kDebugMode) {
@@ -2635,20 +2904,22 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         print('Course ID: $courseId');
         print('Response Type: ${exams.runtimeType}');
         print('Total Exams: ${exams.length}');
+        print('Total Assignments (from course payload): ${assignments.length}');
+        print('Total Assessments (merged): ${mergedAssessments.length}');
         print('───────────────────────────────────────────────────────────');
         print('Full Response JSON:');
         try {
           const encoder = JsonEncoder.withIndent('  ');
-          print(encoder.convert(exams));
+          print(encoder.convert(mergedAssessments));
         } catch (e) {
           print('Could not convert to JSON: $e');
           print('Raw Response: $exams');
         }
         print('───────────────────────────────────────────────────────────');
-        print('Exams Summary:');
-        for (int i = 0; i < exams.length; i++) {
-          final exam = exams[i];
-          print('  Exam ${i + 1}:');
+        print('Assessments Summary:');
+        for (int i = 0; i < mergedAssessments.length; i++) {
+          final exam = mergedAssessments[i];
+          print('  Item ${i + 1}:');
           print('    - ID: ${exam['id']}');
           print('    - Title: ${exam['title']}');
           print('    - Type: ${exam['type']}');
@@ -2659,7 +2930,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       }
 
       setState(() {
-        _courseExams = exams;
+        _courseExams = mergedAssessments;
         _isLoadingExams = false;
       });
     } catch (e) {
@@ -2674,6 +2945,121 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       }
       setState(() => _isLoadingExams = false);
     }
+  }
+
+  Future<void> _loadCourseAssignments() async {
+    final course = _courseData ?? widget.course;
+    if (course == null || course['id'] == null) return;
+
+    final courseId = course['id']?.toString();
+    if (courseId == null || courseId.isEmpty) return;
+
+    try {
+      final assignments =
+          await CoursesService.instance.getCourseAssignments(courseId);
+      final normalized = assignments.map((item) {
+        return {
+          ...item,
+          'type': 'assignment',
+          'can_start': item['can_start'] ?? true,
+        };
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _courseAssignments = normalized;
+      });
+      if (kDebugMode) {
+        print('✅ Loaded course assignments: ${normalized.length}');
+      }
+      _loadCourseExams();
+    } catch (e) {
+      if (kDebugMode) {
+        print('⚠️ Could not load course assignments endpoint: $e');
+      }
+      // Keep graceful fallback to assignments extracted from course payload.
+    }
+  }
+
+  List<Map<String, dynamic>> _extractAssignmentsFromCourse(
+      Map<String, dynamic> course) {
+    final assignments = <Map<String, dynamic>>[];
+
+    void addAssignment(dynamic raw) {
+      if (raw is! Map) return;
+      final item = Map<String, dynamic>.from(raw);
+      final title = item['title']?.toString().trim();
+      if (title == null || title.isEmpty) return;
+      assignments.add({
+        ...item,
+        'type': 'assignment',
+        'can_start': item['can_start'] ?? true,
+      });
+    }
+
+    final directKeys = ['assignments', 'course_assignments', 'homeworks', 'tasks'];
+    for (final key in directKeys) {
+      final raw = course[key];
+      if (raw is List) {
+        for (final item in raw) {
+          addAssignment(item);
+        }
+      }
+    }
+
+    final curriculum = course['curriculum'];
+    if (curriculum is List) {
+      void scanItems(List<dynamic> items) {
+        for (final rawItem in items) {
+          if (rawItem is! Map) continue;
+          final item = Map<String, dynamic>.from(rawItem);
+          final type = item['type']?.toString().toLowerCase();
+          if (type == 'assignment' || type == 'homework' || type == 'task') {
+            addAssignment(item);
+          }
+
+          final nestedLessons = item['lessons'];
+          if (nestedLessons is List) {
+            scanItems(nestedLessons);
+          }
+          final nestedSubsections = item['subsections'];
+          if (nestedSubsections is List) {
+            scanItems(nestedSubsections);
+          }
+        }
+      }
+
+      scanItems(curriculum);
+    }
+
+    return assignments;
+  }
+
+  List<Map<String, dynamic>> _mergeAssessments(
+    List<Map<String, dynamic>> exams,
+    List<Map<String, dynamic>> assignments,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    void addUnique(Map<String, dynamic> item) {
+      final id = item['id']?.toString();
+      final title = item['title']?.toString() ?? '';
+      final type = item['type']?.toString() ?? '';
+      final key = id != null && id.isNotEmpty ? '$type:$id' : '$type:$title';
+      if (seen.add(key)) {
+        merged.add(item);
+      }
+    }
+
+    for (final exam in exams) {
+      addUnique(exam);
+    }
+    for (final assignment in assignments) {
+      addUnique(assignment);
+    }
+
+    return merged;
   }
 
   Future<void> _checkWishlistStatus() async {

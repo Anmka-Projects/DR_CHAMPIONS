@@ -595,16 +595,29 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
     if (index < 0 || index >= _allVideoUrls.length) return;
     if (index == _currentVideoIndex) return;
 
+    final previousController = _controller;
+
+    // Unmount PodVideoPlayer first, then dispose controller in next frame.
+    // This avoids GetX lookup races inside pod_player dispose lifecycle.
     setState(() {
       _isVideoLoading = true;
       _currentVideoIndex = index;
+      _controller = null;
+      _webViewController = null;
+      _useWebViewFallback = false;
     });
 
-    // Dispose old controller
-    _controller?.dispose();
-    _controller = null;
-    _webViewController = null;
-    _useWebViewFallback = false;
+    if (previousController != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        try {
+          previousController.dispose();
+        } catch (e) {
+          if (kDebugMode) {
+            print('⚠️ Safe dispose skipped (already disposed): $e');
+          }
+        }
+      });
+    }
 
     final videoUrl = _allVideoUrls[index];
 

@@ -56,6 +56,42 @@ class AuthService {
         : 'تم تجاوز الحد الأقصى لعدد الأجهزة المسموح بها لهذا الحساب';
   }
 
+  String _extractApiErrorMessage(
+    ApiException e, {
+    required String fallbackMessage,
+  }) {
+    final errorData = e.errorData;
+    if (errorData != null) {
+      final message = errorData['message']?.toString();
+      if (message != null && message.isNotEmpty) {
+        final errors = errorData['errors'];
+        if (errors is Map && errors.isNotEmpty) {
+          final fieldErrors = <String>[];
+          for (final value in errors.values) {
+            if (value is List) {
+              for (final item in value) {
+                final text = item?.toString().trim() ?? '';
+                if (text.isNotEmpty) fieldErrors.add(text);
+              }
+            } else {
+              final text = value?.toString().trim() ?? '';
+              if (text.isNotEmpty) fieldErrors.add(text);
+            }
+          }
+
+          if (fieldErrors.isNotEmpty) {
+            return '$message\n${fieldErrors.join('\n')}';
+          }
+        }
+        return message;
+      }
+    }
+
+    final directMessage = e.message.trim();
+    if (directMessage.isNotEmpty) return directMessage;
+    return fallbackMessage;
+  }
+
   /// Login user with email or phone
   Future<AuthResponse> login({
     required String emailOrPhone,
@@ -329,19 +365,12 @@ class AuthService {
       }
     } catch (e) {
       if (e is ApiException) {
-        // Try to parse error message from response body
-        try {
-          final errorBody = e.message;
-          final match = RegExp(r'\{.*\}').firstMatch(errorBody);
-          if (match != null) {
-            final errorJson = jsonDecode(match.group(0)!);
-            final message = errorJson['message'] ??
-                errorJson['error'] ??
-                'Registration failed';
-            throw Exception(message);
-          }
-        } catch (_) {}
-        throw Exception('فشل إنشاء الحساب. يرجى المحاولة مرة أخرى');
+        throw Exception(
+          _extractApiErrorMessage(
+            e,
+            fallbackMessage: 'فشل إنشاء الحساب. يرجى المحاولة مرة أخرى',
+          ),
+        );
       }
       rethrow;
     }

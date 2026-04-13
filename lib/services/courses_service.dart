@@ -362,6 +362,94 @@ class CoursesService {
     }
   }
 
+  /// Get course assignments for student
+  Future<List<Map<String, dynamic>>> getCourseAssignments(String courseId) async {
+    try {
+      final response = await ApiClient.instance.get(
+        ApiEndpoints.courseAssignments(courseId),
+        requireAuth: true,
+      );
+
+      List<Map<String, dynamic>> toList(dynamic raw) {
+        if (raw is! List) return <Map<String, dynamic>>[];
+        return raw
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+      }
+
+      if (response['success'] != true) {
+        throw Exception(
+            response['message'] ?? 'Failed to fetch course assignments');
+      }
+
+      final data = response['data'];
+
+      // Common payload shapes:
+      // 1) { data: [ ... ] }
+      final fromDirectData = toList(data);
+      if (fromDirectData.isNotEmpty) return fromDirectData;
+
+      // 2) { data: { assignments: [...] | data: [...] | items: [...] | rows: [...] } }
+      if (data is Map<String, dynamic>) {
+        for (final key in ['assignments', 'data', 'items', 'rows']) {
+          final parsed = toList(data[key]);
+          if (parsed.isNotEmpty) return parsed;
+        }
+      }
+
+      // 3) { assignments: [...] } on root
+      for (final key in ['assignments', 'items', 'rows']) {
+        final parsed = toList(response[key]);
+        if (parsed.isNotEmpty) return parsed;
+      }
+
+      if (kDebugMode) {
+        print('⚠️ Assignments response parsed empty for course: $courseId');
+        print('   response keys: ${response.keys.toList()}');
+        print('   data type: ${data.runtimeType}');
+      }
+
+      return <Map<String, dynamic>>[];
+    } on ApiException catch (e) {
+      // Production often returns Next.js HTML 404 when the route is not mounted
+      // on the API (same host as the web app). Treat as empty list so the UI
+      // can still use curriculum-based fallbacks without a thrown error.
+      if (e.statusCode == 404) {
+        if (kDebugMode) {
+          print(
+            '⚠️ GET .../courses/$courseId/assignments returned 404 (no API route '
+            'or assignment module not deployed). Using empty list.');
+        }
+        return <Map<String, dynamic>>[];
+      }
+      rethrow;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Get single assignment details for student
+  Future<Map<String, dynamic>> getCourseAssignmentDetails(
+    String courseId,
+    String assignmentId,
+  ) async {
+    try {
+      final response = await ApiClient.instance.get(
+        ApiEndpoints.courseAssignmentDetails(courseId, assignmentId),
+        requireAuth: true,
+      );
+
+      if (response['success'] == true && response['data'] != null) {
+        return Map<String, dynamic>.from(response['data'] as Map);
+      }
+
+      throw Exception(response['message'] ?? 'Failed to fetch assignment details');
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   /// Get lesson content
   Future<Map<String, dynamic>> getLessonContent(
     String courseId,

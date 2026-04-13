@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import '../../core/design/app_colors.dart';
+import '../../core/navigation/route_names.dart';
 import '../../core/design/app_text_styles.dart';
 import '../../core/design/app_radius.dart';
 import '../../core/localization/localization_helper.dart';
@@ -85,6 +88,12 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     } else {
       return '${sizeMB.toStringAsFixed(0)} MB';
     }
+  }
+
+  bool _isAssignmentPdf(DownloadedVideoModel video) {
+    final src = video.videoSource.toLowerCase();
+    final ft = video.fileType.toLowerCase();
+    return src == 'assignment_pdf' || ft.contains('pdf');
   }
 
   @override
@@ -318,8 +327,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final title = video.title;
     final courseTitle = video.courseTitle;
     final sizeStr = _formatSize(video.fileSizeMb);
-    final durationText =
-        video.durationText.isNotEmpty ? video.durationText : 'غير محدد';
+    final isPdf = _isAssignmentPdf(video);
+    final isAr = Localizations.localeOf(context).languageCode == 'ar';
+    final durationText = isPdf
+        ? (isAr ? 'ملف PDF' : 'PDF file')
+        : (video.durationText.isNotEmpty ? video.durationText : 'غير محدد');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12), // space-y-3
@@ -348,9 +360,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   color: AppColors.purple.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12), // rounded-xl
                 ),
-                child: const Icon(
-                  Icons.video_library,
-                  color: AppColors.purple,
+                child: Icon(
+                  isPdf ? Icons.picture_as_pdf_rounded : Icons.video_library,
+                  color: isPdf ? Colors.red.shade700 : AppColors.purple,
                   size: 32,
                 ),
               ),
@@ -431,7 +443,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
           // Play button - matches React: w-full py-3 rounded-xl bg-[var(--purple)]
           GestureDetector(
-            onTap: () => _handlePlayOffline(video),
+            onTap: () => _handleOpenDownload(context, video),
             child: Container(
               alignment: Alignment.center,
               width: double.infinity,
@@ -443,14 +455,16 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(
-                    Icons.play_arrow,
+                  Icon(
+                    isPdf ? Icons.open_in_new_rounded : Icons.play_arrow,
                     size: 20, // w-5 h-5
                     color: Colors.white,
                   ),
                   const SizedBox(width: 8), // gap-2
                   Text(
-                    context.l10n.watchOffline,
+                    isPdf
+                        ? (isAr ? 'فتح PDF' : 'Open PDF')
+                        : context.l10n.watchOffline,
                     style: AppTextStyles.bodyMedium(
                       color: Colors.white,
                     ).copyWith(fontWeight: FontWeight.w500),
@@ -464,7 +478,32 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
   }
 
-  void _handlePlayOffline(DownloadedVideoModel video) {
+  void _handleOpenDownload(BuildContext context, DownloadedVideoModel video) {
+    if (_isAssignmentPdf(video)) {
+      final path = video.localPath;
+      if (!File(path).existsSync()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Localizations.localeOf(context).languageCode == 'ar'
+                  ? 'الملف غير موجود على الجهاز'
+                  : 'File not found on device',
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      context.push(
+        RouteNames.pdfViewer,
+        extra: {
+          'pdfUrl': Uri.file(path).toString(),
+          'title': video.title,
+        },
+      );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(

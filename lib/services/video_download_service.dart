@@ -300,6 +300,67 @@ class VideoDownloadService {
     }
   }
 
+  /// Register an assignment PDF saved under app storage so it appears on [DownloadsScreen].
+  Future<String?> registerAssignmentPdfDownload({
+    required String assignmentId,
+    required String courseId,
+    required String title,
+    required String sourceUrl,
+    required String localPath,
+    String? courseTitle,
+  }) async {
+    try {
+      if (_database == null) {
+        await _initializeDatabase();
+      }
+
+      await _database?.delete(
+        _tableName,
+        where: 'lesson_id = ? AND video_source = ?',
+        whereArgs: [assignmentId, 'assignment_pdf'],
+      );
+
+      final file = File(localPath);
+      if (!await file.exists()) {
+        print('❌ registerAssignmentPdfDownload: file missing at $localPath');
+        return null;
+      }
+
+      final fileSize = await file.length();
+      final fileSizeMb = fileSize / (1024 * 1024);
+      final id =
+          'assign_pdf_${assignmentId}_${DateTime.now().millisecondsSinceEpoch}';
+
+      await _database?.insert(
+        _tableName,
+        {
+          'id': id,
+          'lesson_id': assignmentId,
+          'course_id': courseId,
+          'course_title': courseTitle ?? '',
+          'title': title,
+          'description': '',
+          'video_url': sourceUrl,
+          'local_path': localPath,
+          'file_size': fileSize,
+          'file_size_mb': fileSizeMb,
+          'file_type': 'application/pdf',
+          'duration': 0,
+          'duration_text': '',
+          'video_source': 'assignment_pdf',
+          'downloaded_at': DateTime.now().toIso8601String(),
+          'thumbnail_path': '',
+        },
+      );
+
+      print('✅ Assignment PDF registered in downloads DB: $id');
+      return id;
+    } catch (e) {
+      print('❌ registerAssignmentPdfDownload: $e');
+      return null;
+    }
+  }
+
   /// الحصول على معلومات التحميل من API
   Future<DownloadData?> getDownloadInfo(String lessonId) async {
     try {

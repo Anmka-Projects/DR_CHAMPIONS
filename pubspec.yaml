@@ -29,6 +29,7 @@ dependencies:
   file_picker: any
   image_picker: any
   intl: any
+  path: any
   path_provider: any
   permission_handler: any
   pod_player: any

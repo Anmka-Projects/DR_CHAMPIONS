@@ -7,7 +7,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../core/design/app_colors.dart';
 import '../../services/token_storage_service.dart';
 
@@ -52,6 +51,34 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       if (kDebugMode) {
         print('📄 Loading PDF: $pdfUrl');
         print('🔑 Token exists: ${token != null && token.isNotEmpty}');
+      }
+
+      // Local file (e.g. saved from in-app Downloads)
+      final uriTry = Uri.tryParse(pdfUrl);
+      if (uriTry != null && uriTry.isScheme('file')) {
+        final path = uriTry.toFilePath();
+        final f = File(path);
+        if (await f.exists()) {
+          if (mounted) {
+            setState(() {
+              _localPath = path;
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+      }
+      if (!pdfUrl.startsWith('http://') && !pdfUrl.startsWith('https://')) {
+        final f = File(pdfUrl);
+        if (await f.exists()) {
+          if (mounted) {
+            setState(() {
+              _localPath = f.path;
+              _isLoading = false;
+            });
+          }
+          return;
+        }
       }
 
       // Build PDF URL with token as query parameter (for fallback)

@@ -450,6 +450,33 @@ class CoursesService {
     }
   }
 
+  /// Submit or resubmit assignment (see `docs/FLUTTER_ASSIGNMENT_STUDENT_LOGIC.md`).
+  /// Upload files first via [UploadService], then pass returned URL paths in [answerFiles] / [answerImages].
+  Future<void> submitCourseAssignment(
+    String courseId,
+    String assignmentId, {
+    String? answerText,
+    List<String> answerImages = const [],
+    List<String> answerFiles = const [],
+  }) async {
+    final trimmed = answerText?.trim() ?? '';
+    final body = <String, dynamic>{
+      if (trimmed.isNotEmpty) 'answer_text': trimmed,
+      'answer_images': answerImages,
+      'answer_files': answerFiles,
+    };
+
+    final response = await ApiClient.instance.post(
+      ApiEndpoints.courseAssignmentSubmit(courseId, assignmentId),
+      body: body,
+      requireAuth: true,
+    );
+
+    if (response['success'] != true) {
+      throw Exception(response['message']?.toString() ?? 'Failed to submit assignment');
+    }
+  }
+
   /// Get lesson content
   Future<Map<String, dynamic>> getLessonContent(
     String courseId,

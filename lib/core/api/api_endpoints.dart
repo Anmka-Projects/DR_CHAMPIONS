@@ -101,6 +101,11 @@ class ApiEndpoints {
       '$baseUrl/courses/$courseId/assignments';
   static String courseAssignmentDetails(String courseId, String assignmentId) =>
       '$baseUrl/courses/$courseId/assignments/$assignmentId';
+  static String courseAssignmentSubmit(String courseId, String assignmentId) =>
+      '$baseUrl/courses/$courseId/assignments/$assignmentId/submit';
+
+  /// Alternate upload path from API docs (`POST /api/uploads/upload`).
+  static String get uploadsUpload => '$baseUrl/uploads/upload';
 
   // Certificates
   static String get certificates => '$baseUrl/certificates';

@@ -19,9 +19,33 @@ import '../../core/design/app_colors.dart';
 import '../../core/navigation/route_names.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/courses_service.dart';
+import '../../services/lesson_resume_service.dart';
+import '../../services/profile_service.dart';
 import '../../services/token_storage_service.dart';
 import '../../services/video_download_service.dart';
 import '../../services/youtube_video_service.dart';
+
+class _LessonResumeSnapshot {
+  final String courseId;
+  final String lessonId;
+  final String? lessonTitle;
+  final int positionMs;
+  final int videoIndex;
+  final int audioIndex;
+  final int watchedSeconds;
+  final bool lessonMarkedComplete;
+
+  const _LessonResumeSnapshot({
+    required this.courseId,
+    required this.lessonId,
+    this.lessonTitle,
+    required this.positionMs,
+    required this.videoIndex,
+    required this.audioIndex,
+    required this.watchedSeconds,
+    required this.lessonMarkedComplete,
+  });
+}
 
 /// Lesson Viewer Screen - Modern & Eye-Friendly Design
 class LessonViewerScreen extends StatefulWidget {
@@ -34,7 +58,8 @@ class LessonViewerScreen extends StatefulWidget {
   State<LessonViewerScreen> createState() => _LessonViewerScreenState();
 }
 
-class _LessonViewerScreenState extends State<LessonViewerScreen> {
+class _LessonViewerScreenState extends State<LessonViewerScreen>
+    with WidgetsBindingObserver {
   PodPlayerController? _controller;
   WebViewController? _webViewController;
   WebViewController? _descriptionWebViewController;
@@ -63,10 +88,19 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
   int _currentAudioIndex = 0;
   List<String> _allVideoUrls = [];
   int _currentVideoIndex = 0;
+  late final String _watermarkSessionTag;
+  String _watermarkUserName = 'User';
+  bool _isForcingPortrait = false;
+  Map<String, dynamic>? _pendingResume;
+  bool _consumedVideoResumeSeek = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _watermarkSessionTag =
+        DateTime.now().millisecondsSinceEpoch.toString().substring(7);
+    _loadWatermarkUserName();
     _initializeDownloadService();
     _loadLessonContent().then((_) {
       // Initialize video after content is loaded (or failed)
@@ -91,6 +125,197 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
         t.contains('<table') ||
         t.contains('<a ') ||
         t.contains('</');
+  }
+
+  Future<void> _loadWatermarkUserName() async {
+    try {
+      final profile = await ProfileService.instance.getProfile();
+      final name = profile['name']?.toString().trim();
+      if (!mounted) return;
+      if (name != null && name.isNotEmpty) {
+        setState(() => _watermarkUserName = name);
+      }
+    } catch (_) {
+      // Keep fallback.
+    }
+  }
+
+  Future<void> _loadPendingResume() async {
+    _pendingResume = null;
+    final lesson = widget.lesson;
+    if (lesson == null) return;
+
+    String? courseId = widget.courseId;
+    if (courseId == null || courseId.isEmpty) {
+      courseId =
+          lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
+    }
+    final lessonId = lesson['id']?.toString();
+    if (courseId == null ||
+        courseId.isEmpty ||
+        lessonId == null ||
+        lessonId.isEmpty) {
+      return;
+    }
+
+    final saved =
+        await LessonResumeService.instance.getLastOpenedLesson(courseId);
+    if (saved?['lessonId']?.toString() == lessonId) {
+      _pendingResume = saved;
+      final ws = int.tryParse(saved!['watchedSeconds']?.toString() ?? '');
+      if (ws != null && ws > _watchedSeconds) {
+        _watchedSeconds = ws;
+      }
+    }
+  }
+
+  Future<void> _onPodControllerInitialized(
+      {bool clearWebViewFallback = false}) async {
+    if (!mounted || _controller == null) return;
+    final c = _controller!;
+    c.addListener(() {
+      if (_didVideoReachEnd(c)) {
+        _markLessonComplete();
+      }
+    });
+    if (mounted) {
+      setState(() {
+        _isVideoLoading = false;
+        if (clearWebViewFallback) _useWebViewFallback = false;
+      });
+    }
+    await _seekPodToSavedPositionIfNeededOnce();
+  }
+
+  Future<void> _seekPodToSavedPositionIfNeededOnce() async {
+    if (_consumedVideoResumeSeek) return;
+    final pr = _pendingResume;
+    final c = _controller;
+    if (pr == null || c == null) return;
+    final ms = int.tryParse(pr['positionMs']?.toString() ?? '') ?? 0;
+    if (ms <= 0) return;
+    _consumedVideoResumeSeek = true;
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (!mounted || _controller != c) return;
+    try {
+      await c.videoSeekTo(Duration(milliseconds: ms));
+    } catch (_) {}
+  }
+
+  _LessonResumeSnapshot _captureResumeSnapshot() {
+    final lesson = widget.lesson;
+    var courseId = widget.courseId ?? '';
+    if (lesson != null && courseId.isEmpty) {
+      courseId = lesson['course_id']?.toString() ??
+          lesson['courseId']?.toString() ??
+          '';
+    }
+    final lessonId = lesson?['id']?.toString() ?? '';
+    final title = lesson?['title']?.toString();
+
+    var positionMs = 0;
+    final vIdx = _currentVideoIndex;
+    final aIdx = _currentAudioIndex;
+
+    if (_controller != null) {
+      try {
+        final dynamic c = _controller!;
+        final pos = c.currentVideoPosition as Duration?;
+        positionMs = pos?.inMilliseconds ?? 0;
+      } catch (_) {}
+    } else if (_isAudioLesson && _audioPlayer != null) {
+      positionMs = _audioPosition.inMilliseconds;
+    }
+
+    var watched = _watchedSeconds;
+    final secFromPosition = (positionMs / 1000).round();
+    if (secFromPosition > watched) watched = secFromPosition;
+
+    return _LessonResumeSnapshot(
+      courseId: courseId,
+      lessonId: lessonId,
+      lessonTitle: title,
+      positionMs: positionMs,
+      videoIndex: vIdx,
+      audioIndex: aIdx,
+      watchedSeconds: watched,
+      lessonMarkedComplete: _lessonMarkedComplete,
+    );
+  }
+
+  Future<void> _persistResumeSnapshot(_LessonResumeSnapshot s) async {
+    if (s.courseId.isEmpty || s.lessonId.isEmpty) return;
+    try {
+      await LessonResumeService.instance.saveLastOpenedLesson(
+        courseId: s.courseId,
+        lessonId: s.lessonId,
+        lessonTitle: s.lessonTitle,
+        positionMs: s.positionMs,
+        videoIndex: s.videoIndex,
+        audioIndex: s.audioIndex,
+        watchedSeconds: s.watchedSeconds,
+        markLessonCompletedId:
+            s.lessonMarkedComplete ? s.lessonId : null,
+      );
+    } catch (_) {}
+
+    if (!s.lessonMarkedComplete) {
+      try {
+        await CoursesService.instance.updateLessonProgress(
+          s.courseId,
+          s.lessonId,
+          watchedSeconds: s.watchedSeconds,
+          isCompleted: false,
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _applySavedAudioResumeIfNeeded() async {
+    if (!_isAudioLesson || _pendingResume == null || _audioPlayer == null) {
+      return;
+    }
+    final pr = _pendingResume!;
+    final aIdx = int.tryParse(pr['audioIndex']?.toString() ?? '') ?? 0;
+    if (aIdx > 0 && aIdx < _allAudioUrls.length) {
+      await _loadAudioTrack(aIdx);
+    }
+    final ms = int.tryParse(pr['positionMs']?.toString() ?? '') ?? 0;
+    if (ms > 0) {
+      try {
+        await _audioPlayer!.seek(Duration(milliseconds: ms));
+      } catch (_) {}
+    }
+  }
+
+  Widget _buildVideoWatermarkOverlay() {
+    final media = MediaQuery.of(context);
+    final isLandscape = media.orientation == Orientation.landscape;
+    final watermark = '$_watermarkUserName • $_watermarkSessionTag';
+    final style = GoogleFonts.cairo(
+      fontSize: isLandscape ? 11 : 12,
+      fontWeight: FontWeight.w700,
+      color: Colors.white.withValues(alpha: 0.35),
+      height: 1.2,
+    );
+
+    return Align(
+      alignment: Alignment.bottomRight,
+      child: Padding(
+        padding: EdgeInsets.only(
+          right: isLandscape ? 12 : 14,
+          bottom: isLandscape ? 10 : 12,
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(watermark, style: style),
+        ),
+      ),
+    );
   }
 
   void _ensureDescriptionWebViewLoaded(String description) {
@@ -301,7 +526,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                               child: SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
                             ),
                           );
@@ -349,14 +575,32 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
   Future<void> _markLessonComplete() async {
     if (_lessonMarkedComplete) return;
     _lessonMarkedComplete = true;
+    final courseId =
+        widget.courseId ?? widget.lesson?['course_id']?.toString() ?? '';
+    final lessonId = widget.lesson?['id']?.toString() ?? '';
+    final snap = _captureResumeSnapshot();
     try {
       await CoursesService.instance.updateLessonProgress(
-        widget.courseId ?? widget.lesson?['course_id']?.toString() ?? '',
-        widget.lesson?['id']?.toString() ?? '',
-        watchedSeconds: _watchedSeconds,
+        courseId,
+        lessonId,
+        watchedSeconds: snap.watchedSeconds,
         isCompleted: true,
       );
     } catch (_) {}
+    if (courseId.isNotEmpty && lessonId.isNotEmpty) {
+      try {
+        await LessonResumeService.instance.saveLastOpenedLesson(
+          courseId: courseId,
+          lessonId: lessonId,
+          lessonTitle: widget.lesson?['title']?.toString(),
+          positionMs: snap.positionMs,
+          videoIndex: snap.videoIndex,
+          audioIndex: snap.audioIndex,
+          watchedSeconds: snap.watchedSeconds,
+          markLessonCompletedId: lessonId,
+        );
+      } catch (_) {}
+    }
   }
 
   bool _didVideoReachEnd(PodPlayerController controller) {
@@ -447,6 +691,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
       return;
     }
 
+    await _loadPendingResume();
     try {
       final content = await CoursesService.instance.getLessonContent(
         courseId,
@@ -465,7 +710,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
         _ensureDescriptionWebViewLoaded(desc);
       }
 
-      _initializeAudioFromContent();
+      await _initializeAudioFromContent();
+      await _applySavedAudioResumeIfNeeded();
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error loading lesson content: $e');
@@ -481,7 +727,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
         _ensureDescriptionWebViewLoaded(desc);
       }
 
-      _initializeAudioFromContent();
+      await _initializeAudioFromContent();
+      await _applySavedAudioResumeIfNeeded();
     }
   }
 
@@ -595,6 +842,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
     if (index < 0 || index >= _allVideoUrls.length) return;
     if (index == _currentVideoIndex) return;
 
+    _consumedVideoResumeSeek = true;
+
     final previousController = _controller;
 
     // Unmount PodVideoPlayer first, then dispose controller in next frame.
@@ -628,13 +877,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
           autoPlay: true,
           isLooping: false,
         ),
-      )..initialise().then((_) {
-          _controller!.addListener(() {
-            if (_didVideoReachEnd(_controller!)) {
-              _markLessonComplete();
-            }
-          });
-          if (mounted) setState(() => _isVideoLoading = false);
+      )..initialise().then((_) async {
+          await _onPodControllerInitialized();
         }).catchError((_) {
           if (mounted) setState(() => _isVideoLoading = false);
         });
@@ -824,14 +1068,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
         lesson['youtube_id']?.toString() ??
         lesson['youtubeVideoId']?.toString();
 
-    final bool isVimeoUrl =
-        videoUrl != null && videoUrl.toLowerCase().contains('vimeo.com');
-    if (vimeoId == null && isVimeoUrl) {
-      final match = RegExp(r'vimeo\.com/(?:video/)?(\d+)')
-          .firstMatch(videoUrl.toLowerCase());
-      vimeoId = match?.group(1);
-    }
-
     if (videoId == null || videoId.isEmpty) {
       videoId = lesson['id']?.toString();
     }
@@ -854,6 +1090,27 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
     }
 
     _allVideoUrls = _collectAllVideoUrls();
+    if (_allVideoUrls.isNotEmpty) {
+      var startIdx = 0;
+      if (_pendingResume != null) {
+        final vi =
+            int.tryParse(_pendingResume!['videoIndex']?.toString() ?? '') ?? 0;
+        if (vi >= 0 && vi < _allVideoUrls.length) startIdx = vi;
+      }
+      _currentVideoIndex = startIdx;
+      final picked = _cleanVideoUrl(_allVideoUrls[startIdx]);
+      if (picked != null && picked.isNotEmpty) {
+        videoUrl = picked;
+      }
+    }
+
+    final bool isVimeoUrl =
+        videoUrl != null && videoUrl.toLowerCase().contains('vimeo.com');
+    if (vimeoId == null && isVimeoUrl) {
+      final match = RegExp(r'vimeo\.com/(?:video/)?(\d+)')
+          .firstMatch(videoUrl.toLowerCase());
+      vimeoId = match?.group(1);
+    }
 
     if (vimeoId != null || isVimeoUrl) {
       if (kDebugMode) {
@@ -889,15 +1146,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
               autoPlay: false,
               isLooping: false,
             ),
-          )..initialise().then((_) {
-              _controller!.addListener(() {
-                if (_didVideoReachEnd(_controller!)) {
-                  _markLessonComplete();
-                }
-              });
-              if (mounted) {
-                setState(() => _isVideoLoading = false);
-              }
+          )..initialise().then((_) async {
+              await _onPodControllerInitialized();
             }).catchError((error) {
               if (kDebugMode) {
                 print('❌ Error initializing YouTube video: $error');
@@ -925,15 +1175,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
             autoPlay: false,
             isLooping: false,
           ),
-        )..initialise().then((_) {
-            _controller!.addListener(() {
-              if (_didVideoReachEnd(_controller!)) {
-                _markLessonComplete();
-              }
-            });
-            if (mounted) {
-              setState(() => _isVideoLoading = false);
-            }
+        )..initialise().then((_) async {
+            await _onPodControllerInitialized();
           }).catchError((error) {
             if (kDebugMode) {
               print('❌ Error initializing YouTube video by ID: $error');
@@ -992,18 +1235,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
           autoPlay: false,
           isLooping: false,
         ),
-      )..initialise().then((_) {
-          _controller!.addListener(() {
-            if (_didVideoReachEnd(_controller!)) {
-              _markLessonComplete();
-            }
-          });
-          if (mounted) {
-            setState(() {
-              _isVideoLoading = false;
-              _useWebViewFallback = false;
-            });
-          }
+      )..initialise().then((_) async {
+          await _onPodControllerInitialized(clearWebViewFallback: true);
           if (kDebugMode) {
             print('✅ Direct video initialized successfully with pod_player');
           }
@@ -1463,8 +1696,16 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
 
   @override
   void dispose() {
+    final snap = _captureResumeSnapshot();
+    unawaited(_persistResumeSnapshot(snap));
+    // Safety reset: never leave app locked in landscape after exiting lesson.
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _isVimeoVideo = false;
     _vimeoId = null;
+    WidgetsBinding.instance.removeObserver(this);
     _progressTimer?.cancel();
     _controller?.dispose();
     _audioPlayer?.dispose();
@@ -1479,6 +1720,55 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
       }
     }
     super.dispose();
+  }
+
+  bool _isPlayerFullscreen() {
+    try {
+      final dynamic c = _controller;
+      return c?.isFullScreen == true || c?.isFullscreen == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _forcePortraitMode() async {
+    if (_isForcingPortrait) return;
+    _isForcingPortrait = true;
+    try {
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      // Some devices apply orientation one frame later.
+      await Future.delayed(const Duration(milliseconds: 120));
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]);
+    } catch (_) {
+      // no-op
+    } finally {
+      _isForcingPortrait = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      unawaited(_persistResumeSnapshot(_captureResumeSnapshot()));
+    }
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final isLandscapeNow = view.physicalSize.width > view.physicalSize.height;
+    if (isLandscapeNow && !_isPlayerFullscreen()) {
+      _forcePortraitMode();
+    }
   }
 
   @override
@@ -1596,7 +1886,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                       ),
                       Text(
                         AppLocalizations.of(context)!.duration(
-                          (lesson['duration'] ?? AppLocalizations.of(context)!.notSpecified)
+                          (lesson['duration'] ??
+                                  AppLocalizations.of(context)!.notSpecified)
                               .toString(),
                         ),
                         style: GoogleFonts.cairo(
@@ -1609,7 +1900,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                 ),
                 if (_controller != null)
                   PopupMenuButton<double>(
-                    icon: const Icon(Icons.speed, color: Colors.white, size: 22),
+                    icon:
+                        const Icon(Icons.speed, color: Colors.white, size: 22),
                     color: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
@@ -1628,6 +1920,15 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                       const PopupMenuItem(value: 2.0, child: Text('2x')),
                     ],
                   ),
+                if (!_isVideoLoading &&
+                    (_controller != null ||
+                        (_isVimeoVideo && _vimeoId != null) ||
+                        (_useWebViewFallback && _webViewController != null)))
+                  IconButton(
+                    icon: const Icon(Icons.fullscreen_rounded,
+                        color: Colors.white, size: 24),
+                    onPressed: _openVideoFullscreen,
+                  ),
               ],
             ),
           ),
@@ -1635,60 +1936,244 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
           // Video Player
           SizedBox(
             height: 220,
-            child: _isVideoLoading
-                ? Container(
-                    color: Colors.black,
-                    child: const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.purple,
-                      ),
-                    ),
-                  )
-                : _isVimeoVideo && _vimeoId != null && _webViewController != null
-                    ? WebViewWidget(controller: _webViewController!)
-                    : _controller != null
-                    ? PodVideoPlayer(
-                        controller: _controller!,
-                        videoAspectRatio: 16 / 9,
-                        podProgressBarConfig: const PodProgressBarConfig(
-                          playingBarColor: AppColors.purple,
-                          circleHandlerColor: AppColors.purple,
-                          bufferedBarColor: Colors.white30,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _isVideoLoading
+                    ? Container(
+                        color: Colors.black,
+                        child: const Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.purple,
+                          ),
                         ),
                       )
-                    : _useWebViewFallback && _webViewController != null
+                    : _isVimeoVideo &&
+                            _vimeoId != null &&
+                            _webViewController != null
                         ? WebViewWidget(controller: _webViewController!)
-                        : Container(
-                            color: Colors.black,
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.error_outline,
-                                      color: Colors.white54, size: 48),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    AppLocalizations.of(context)!.cannotLoadVideo,
-                                    style: GoogleFonts.cairo(
-                                      color: Colors.white54,
-                                      fontSize: 14,
+                        : _controller != null
+                            ? PodVideoPlayer(
+                                controller: _controller!,
+                                videoAspectRatio: 16 / 9,
+                                overlayBuilder: _buildCustomPodOverlay,
+                                podProgressBarConfig:
+                                    const PodProgressBarConfig(
+                                  playingBarColor: AppColors.purple,
+                                  circleHandlerColor: AppColors.purple,
+                                  bufferedBarColor: Colors.white30,
+                                ),
+                              )
+                            : _useWebViewFallback && _webViewController != null
+                                ? WebViewWidget(controller: _webViewController!)
+                                : Container(
+                                    color: Colors.black,
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(Icons.error_outline,
+                                              color: Colors.white54, size: 48),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            AppLocalizations.of(context)!
+                                                .cannotLoadVideo,
+                                            style: GoogleFonts.cairo(
+                                              color: Colors.white54,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
-                                ],
-                              ),
-                            ),
-                          ),
+                if (_controller == null)
+                  IgnorePointer(child: _buildVideoWatermarkOverlay()),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildCustomPodOverlay(OverLayOptions options) {
+    final showOverlay = options.isOverlayVisible;
+    final media = MediaQuery.of(context);
+    final isLandscape = media.orientation == Orientation.landscape;
+    final isFullscreen = options.isFullScreen == true;
+    final watermark = '$_watermarkUserName • $_watermarkSessionTag';
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Single tap: play/pause (no onDoubleTap here — it delays the first tap).
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            final c = _controller;
+            if (c == null) return;
+            try {
+              if (c.isVideoPlaying) {
+                c.pause();
+              } else {
+                c.play();
+              }
+              c.showOverlay();
+              if (mounted) setState(() {});
+            } catch (_) {}
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            color: showOverlay
+                ? Colors.black.withValues(alpha: 0.20)
+                : Colors.transparent,
+          ),
+        ),
+        // Keep watermark inside player overlay so it remains visible in fullscreen.
+        Align(
+          alignment: Alignment.bottomRight,
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: isLandscape ? 12 : 14,
+              bottom: isLandscape ? 10 : 12,
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                watermark,
+                style: GoogleFonts.cairo(
+                  fontSize: isLandscape ? 11 : 12,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white.withValues(alpha: 0.35),
+                  height: 1.2,
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Pause glyph while paused only; fades out when playing (taps use layer below).
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: options.podVideoState == PodVideoState.paused ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              child: Center(
+                child: Icon(
+                  Icons.pause_circle_filled_rounded,
+                  size: 88,
+                  color: Colors.white.withValues(alpha: 0.92),
+                  shadows: const [
+                    Shadow(
+                      blurRadius: 14,
+                      offset: Offset(0, 2),
+                      color: Colors.black54,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (showOverlay) ...[
+          Positioned(
+            top: 8,
+            right: 8,
+            child: Material(
+              color: Colors.black.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(24),
+              child: IconButton(
+                icon: Icon(
+                  (isLandscape || isFullscreen)
+                      ? Icons.fullscreen_exit_rounded
+                      : Icons.fullscreen_rounded,
+                  color: Colors.white,
+                ),
+                onPressed: (isLandscape || isFullscreen)
+                    ? _exitVideoFullscreen
+                    : _openVideoFullscreen,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 10,
+            right: 10,
+            bottom: 8,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (isLandscape || isFullscreen)
+                  Material(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(24),
+                    child: IconButton(
+                      tooltip: 'Exit fullscreen',
+                      icon: const Icon(Icons.fullscreen_exit_rounded,
+                          color: Colors.white, size: 22),
+                      onPressed: _exitVideoFullscreen,
+                    ),
+                  ),
+                if (isLandscape || isFullscreen) const SizedBox(width: 6),
+                Expanded(child: options.podProgresssBar),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _openVideoFullscreen() async {
+    final c = _controller;
+    if (c == null || !mounted) return;
+    try {
+      c.enableFullScreen();
+    } catch (e) {
+      if (kDebugMode) {
+        print('enable fullscreen: $e');
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _exitVideoFullscreen() async {
+    final c = _controller;
+    if (c == null || !mounted) return;
+
+    try {
+      if (c.isFullScreen) {
+        final inner = Get.find<PodGetXVideoController>(tag: c.getTag);
+        await inner.disableFullScreen(context, c.getTag);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('disable fullscreen: $e');
+      }
+      try {
+        final inner = Get.find<PodGetXVideoController>(tag: c.getTag);
+        if (inner.isFullScreen &&
+            Navigator.of(inner.fullScreenContext).canPop()) {
+          Navigator.of(inner.fullScreenContext).pop();
+        }
+      } catch (_) {}
+    }
+
+    await _forcePortraitMode();
+    if (mounted) setState(() {});
+  }
+
   Widget _buildAudioPlayer() {
     final lesson = widget.lesson;
-    final title = lesson?['title'] as String? ?? AppLocalizations.of(context)!.lesson;
+    final title =
+        lesson?['title'] as String? ?? AppLocalizations.of(context)!.lesson;
     final maxSeconds = math.max(1, _audioDuration.inSeconds);
-    final canSeek = _audioPlayer != null && _isAudioDurationKnown && maxSeconds > 0;
+    final canSeek =
+        _audioPlayer != null && _isAudioDurationKnown && maxSeconds > 0;
     final sliderValue = canSeek
         ? (_audioPosition.inSeconds / maxSeconds).clamp(0.0, 1.0).toDouble()
         : 0.0;
@@ -1813,8 +2298,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                           onPressed: _currentAudioIndex > 0
                               ? () async {
                                   await _audioPlayer?.stop();
-                                  await _loadAudioTrack(
-                                      _currentAudioIndex - 1);
+                                  await _loadAudioTrack(_currentAudioIndex - 1);
                                   await _audioPlayer?.play();
                                 }
                               : null,
@@ -1843,21 +2327,20 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                       ),
                       if (_allAudioUrls.length > 1)
                         IconButton(
-                          onPressed:
-                              _currentAudioIndex < _allAudioUrls.length - 1
-                                  ? () async {
-                                      await _audioPlayer?.stop();
-                                      await _loadAudioTrack(
-                                          _currentAudioIndex + 1);
-                                      await _audioPlayer?.play();
-                                    }
-                                  : null,
+                          onPressed: _currentAudioIndex <
+                                  _allAudioUrls.length - 1
+                              ? () async {
+                                  await _audioPlayer?.stop();
+                                  await _loadAudioTrack(_currentAudioIndex + 1);
+                                  await _audioPlayer?.play();
+                                }
+                              : null,
                           icon: Icon(Icons.skip_next_rounded,
                               size: 36,
-                              color: _currentAudioIndex <
-                                      _allAudioUrls.length - 1
-                                  ? AppColors.purple
-                                  : Colors.grey[400]),
+                              color:
+                                  _currentAudioIndex < _allAudioUrls.length - 1
+                                      ? AppColors.purple
+                                      : Colors.grey[400]),
                         ),
                     ],
                   ),
@@ -2004,10 +2487,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                   style: GoogleFonts.cairo(
                       fontSize: 12, color: AppColors.mutedForeground)),
               const Spacer(),
-              Text(
-                  _isAudioDurationKnown
-                      ? formatDur(_audioDuration)
-                      : '--:--',
+              Text(_isAudioDurationKnown ? formatDur(_audioDuration) : '--:--',
                   style: GoogleFonts.cairo(
                       fontSize: 12, color: AppColors.mutedForeground)),
             ],
@@ -2058,8 +2538,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                     name,
                     style: GoogleFonts.cairo(
                       fontSize: 13,
-                      fontWeight:
-                          isCurrent ? FontWeight.bold : FontWeight.w500,
+                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
                       color:
                           isCurrent ? AppColors.purple : AppColors.foreground,
                     ),
@@ -2077,8 +2556,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
             if (isCurrent && _isAudioDurationKnown)
               Text(
                 formatDur(_audioPosition),
-                style:
-                    GoogleFonts.cairo(fontSize: 12, color: AppColors.purple),
+                style: GoogleFonts.cairo(fontSize: 12, color: AppColors.purple),
               ),
           ],
         ),
@@ -2167,9 +2645,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
               ? Colors.red.withOpacity(0.08)
               : const Color(0xFFF8F9FC),
           borderRadius: BorderRadius.circular(14),
-          border: isCurrent
-              ? Border.all(color: Colors.red.withOpacity(0.3))
-              : null,
+          border:
+              isCurrent ? Border.all(color: Colors.red.withOpacity(0.3)) : null,
         ),
         child: Row(
           children: [
@@ -2197,8 +2674,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                     name,
                     style: GoogleFonts.cairo(
                       fontSize: 13,
-                      fontWeight:
-                          isCurrent ? FontWeight.bold : FontWeight.w500,
+                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
                       color: isCurrent ? Colors.red : AppColors.foreground,
                     ),
                     maxLines: 1,
@@ -2214,8 +2690,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
             ),
             if (isCurrent)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: Colors.red.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
@@ -2405,7 +2880,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
 
             // Lesson Title & Stats
             Text(
-              lesson['title'] as String? ?? AppLocalizations.of(context)!.lesson,
+              lesson['title'] as String? ??
+                  AppLocalizations.of(context)!.lesson,
               style: GoogleFonts.cairo(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
@@ -2478,9 +2954,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
                         )
                       : Builder(
                           builder: (context) {
-                            final description = _lessonContent?['content']
-                                    as String? ??
-                                '';
+                            final description =
+                                _lessonContent?['content'] as String? ?? '';
 
                             if (description.trim().isEmpty) {
                               return Text(
@@ -2524,7 +2999,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen> {
 
             // Images Section (from course response lesson.images / lesson.media)
             _buildImagesSection(_collectLessonImageUrls()),
-            if (_collectLessonImageUrls().isNotEmpty) const SizedBox(height: 20),
+            if (_collectLessonImageUrls().isNotEmpty)
+              const SizedBox(height: 20),
 
             // Audio Files Section
             _buildAudioFilesSection(),

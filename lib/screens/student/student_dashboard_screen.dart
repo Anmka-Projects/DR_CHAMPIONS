@@ -10,6 +10,7 @@ import '../../core/navigation/route_names.dart';
 import '../../core/api/api_endpoints.dart';
 import '../../widgets/bottom_nav.dart';
 import '../../services/auth_service.dart';
+import '../../services/exams_service.dart';
 import '../../services/profile_service.dart';
 import '../../l10n/app_localizations.dart';
 
@@ -25,6 +26,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _statistics;
+  int _myEnteredExamsCount = 0;
 
   @override
   void initState() {
@@ -35,7 +37,15 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   Future<void> _loadProfile() async {
     setState(() => _isLoading = true);
     try {
-      final profile = await ProfileService.instance.getProfile();
+      final profileFuture = ProfileService.instance.getProfile();
+      final myExamsFuture = ExamsService.instance.getMyExams();
+      final profile = await profileFuture;
+      Map<String, dynamic>? myExamsResponse;
+      try {
+        myExamsResponse = await myExamsFuture;
+      } catch (_) {
+        myExamsResponse = null;
+      }
       if (kDebugMode) {
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         print('🖼️ STUDENT DASHBOARD - PROFILE AVATAR');
@@ -54,9 +64,22 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
         print('✅ Profile loaded: ${profile['name']}');
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       }
+      int enteredExamsCount = 0;
+      if (myExamsResponse != null) {
+        final completed = myExamsResponse['completed'];
+        if (completed is List) {
+          enteredExamsCount = completed.length;
+        } else if (myExamsResponse['results'] is List) {
+          enteredExamsCount = (myExamsResponse['results'] as List).length;
+        } else if (myExamsResponse['items'] is List) {
+          enteredExamsCount = (myExamsResponse['items'] as List).length;
+        }
+      }
+
       setState(() {
         _profile = profile;
         _statistics = profile['statistics'] as Map<String, dynamic>?;
+        _myEnteredExamsCount = enteredExamsCount;
         _isLoading = false;
       });
     } catch (e) {
@@ -210,7 +233,11 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
       {
         'icon': Icons.assignment_rounded,
         'label': l10n.myExams,
-        'subtitle': l10n.viewAllExams,
+        'subtitle': _myEnteredExamsCount > 0
+            ? (Localizations.localeOf(context).languageCode == 'ar'
+                ? 'دخلت $_myEnteredExamsCount امتحان'
+                : 'You entered $_myEnteredExamsCount exams')
+            : l10n.viewAllExams,
         'color': const Color(0xFFF97316),
         'bgColor': const Color(0xFFFFF7ED),
         'onTap': () => context.push(RouteNames.myExams),

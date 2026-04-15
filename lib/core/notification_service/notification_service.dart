@@ -1,14 +1,15 @@
-// Import necessary libraries
-import 'dart:developer'; // For logging and debugging
-import 'dart:math'
-    show Random; // For generating random numbers (show only Random class)
-import 'package:firebase_core/firebase_core.dart'; // Firebase core functionality
-import 'package:firebase_messaging/firebase_messaging.dart'; // Firebase Cloud Messaging
-import 'package:educational_app/firebase_options.dart'; // Firebase options
-import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // Local notifications plugin
+import 'dart:developer';
 
-// Main class for handling Firebase notifications
-/// Top-level background handler required by firebase_messaging
+import 'package:educational_app/firebase_options.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import '../../services/push_inbox_service.dart';
+
+/// Top-level: required by [FirebaseMessaging.onBackgroundMessage].
+/// Runs in a separate isolate when the app is backgrounded or terminated
+/// (for data messages / combined payloads per platform rules).
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     if (Firebase.apps.isEmpty) {
@@ -19,33 +20,41 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   } on FirebaseException catch (e) {
     if (e.code != 'duplicate-app') rethrow;
   }
-  log('Background message received: ${message.messageId}');
+  log('Background FCM: ${message.messageId}');
+  await FirebaseNotification.ensureLocalNotificationsForIsolate();
+  await PushInboxService.instance.addFromRemoteMessage(message);
   await FirebaseNotification.showBasicNotification(message);
 }
 
 class FirebaseNotification {
-  // Firebase Messaging instance for handling FCM
   static final FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-  // Local notifications plugin for showing notifications
   static final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
-  // Variable to store the FCM token (device registration token)
   static String? fcmToken;
 
-  // Android notification channel configuration (required for Android 8.0+)
   static const AndroidNotificationChannel channel = AndroidNotificationChannel(
-    'high_importance_channel', // Channel ID (must be unique)
-    'High Importance Notifications', // Channel name visible to user
-    description:
-        'This channel is used for important notifications.', // Channel description
-    importance: Importance.high, // High importance for sound and alert
+    'high_importance_channel',
+    'High Importance Notifications',
+    description: 'Course updates, exams, and system messages.',
+    importance: Importance.high,
   );
 
-  // Main initialization method for notifications
+  /// Call from background isolate only — initializes the local notifications plugin.
+  static Future<void> ensureLocalNotificationsForIsolate() async {
+    const init = InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      iOS: DarwinInitializationSettings(),
+    );
+    await flutterLocalNotificationsPlugin.initialize(init);
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+  }
+
   static Future<void> initializeNotifications() async {
-    // Ensure Firebase is initialized (defensive for any direct calls)
     try {
       if (Firebase.apps.isEmpty) {
         await Firebase.initializeApp(
@@ -56,9 +65,10 @@ class FirebaseNotification {
       if (e.code != 'duplicate-app') rethrow;
     }
 
-    await requestNotificationPermission(); // Request user permission
-    await getFcmToken(); // Get device FCM token
-    await initializeLocalNotifications(); // Initialize local notifications
+    await requestNotificationPermission();
+    await getFcmToken();
+    await initializeLocalNotifications();
+
     await FirebaseMessaging.instance
         .setForegroundNotificationPresentationOptions(
       alert: true,
@@ -66,97 +76,122 @@ class FirebaseNotification {
       sound: true,
     );
 
-    // Set up background message handler (when app is closed or in background)
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-
-    // Set up foreground message listener (when app is open)
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      log('Received foreground message: ${message.messageId}'); // Log message receipt
-      showBasicNotification(message); // Show local notification
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+      log('Foreground FCM: ${message.messageId}');
+      await PushInboxService.instance.addFromRemoteMessage(message);
+      await showBasicNotification(message);
     });
+
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
+      log('Opened from notification: ${message.messageId}');
+      await PushInboxService.instance.addFromRemoteMessage(message);
+    });
+
+    final initial = await FirebaseMessaging.instance.getInitialMessage();
+    if (initial != null) {
+      log('Cold start from notification: ${initial.messageId}');
+      await PushInboxService.instance.addFromRemoteMessage(initial);
+    }
   }
 
-  // Initialize local notifications plugin
   static Future<void> initializeLocalNotifications() async {
-    // Configuration for initializing local notifications
-    const InitializationSettings initializationSettings =
-        InitializationSettings(
-      android:
-          AndroidInitializationSettings('@mipmap/ic_launcher'), // Android icon
-      iOS: DarwinInitializationSettings(), // iOS settings
+    const init = InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      iOS: DarwinInitializationSettings(),
     );
 
-    // Initialize the local notifications plugin
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+    await flutterLocalNotificationsPlugin.initialize(init);
 
-    // Create notification channel for Android (required for Android 8.0+)
     await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(alert: true, badge: true, sound: true);
   }
 
-  // Request notification permissions from user
   static Future<void> requestNotificationPermission() async {
-    final NotificationSettings settings = await messaging.requestPermission();
-    log('Notification permission status: ${settings.authorizationStatus}'); // Log permission status
+    final settings = await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      provisional: false,
+    );
+    log('FCM permission: ${settings.authorizationStatus}');
   }
 
-  // Get and store the FCM token for this device
   static Future<void> getFcmToken() async {
     try {
-      fcmToken = await messaging.getToken(); // Retrieve FCM token
-      log('FCM Token: $fcmToken'); // Log the token for debugging
-
-      // Listen for token refresh events (tokens can change)
+      fcmToken = await messaging.getToken();
+      log('FCM token: $fcmToken');
       messaging.onTokenRefresh.listen((String newToken) {
-        fcmToken = newToken; // Update stored token
-        log('FCM Token refreshed: $newToken'); // Log token refresh
+        fcmToken = newToken;
+        log('FCM token refreshed');
       });
     } catch (e) {
-      log('Error getting FCM token: $e'); // Log any errors
+      log('FCM token error: $e');
     }
   }
 
-  // Handle background messages (when app is closed or in background)
-  // Random number generator for unique notification IDs
-  static final Random random = Random();
-
-  // Generate a random ID for notifications (prevents duplicate IDs)
-  static int generateRandomId() {
-    return random.nextInt(10000); // Generate random number between 0-9999
+  static int _notificationId(RemoteMessage message) {
+    final mid = message.messageId;
+    if (mid != null && mid.isNotEmpty) {
+      return mid.hashCode & 0x7fffffff;
+    }
+    final t = message.sentTime?.millisecondsSinceEpoch ??
+        DateTime.now().millisecondsSinceEpoch;
+    return t & 0x7fffffff;
   }
 
-  // Display a basic local notification
+  static (String title, String body) _titleBody(RemoteMessage message) {
+    final n = message.notification;
+    var title = (n?.title ??
+            message.data['title'] ??
+            message.data['subject'] ??
+            '')
+        .toString()
+        .trim();
+    var body = (n?.body ??
+            message.data['body'] ??
+            message.data['message'] ??
+            message.data['content'] ??
+            '')
+        .toString()
+        .trim();
+    if (title.isEmpty) title = 'Notification';
+    return (title, body);
+  }
+
   static Future<void> showBasicNotification(RemoteMessage message) async {
     try {
-      // Notification details configuration for both platforms
-      final NotificationDetails details = NotificationDetails(
+      final (title, body) = _titleBody(message);
+      final details = NotificationDetails(
         android: AndroidNotificationDetails(
-          channel.id, // Use predefined channel ID
-          channel.name, // Use predefined channel name
-          channelDescription: channel.description, // Channel description
-          importance: Importance.high, // High importance level
-          priority: Priority.high, // High priority for notification
+          channel.id,
+          channel.name,
+          channelDescription: channel.description,
+          importance: Importance.high,
+          priority: Priority.high,
         ),
         iOS: const DarwinNotificationDetails(
-          presentAlert: true, // Show alert on iOS
-          presentBadge: true, // Update app badge on iOS
-          presentSound: true, // Play sound on iOS
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
         ),
       );
 
-      // Display the notification using local notifications plugin
       await flutterLocalNotificationsPlugin.show(
-        generateRandomId(), // Unique ID for notification
-        message.notification?.title ?? 'No Title', // Title (with fallback)
-        message.notification?.body ?? 'No Body', // Body (with fallback)
-        details, // Platform-specific details
+        _notificationId(message),
+        title,
+        body.isEmpty ? ' ' : body,
+        details,
       );
-
-      log('Local notification shown successfully'); // Log success
+      log('Local notification shown');
     } catch (e) {
-      log('Error showing local notification: $e'); // Log any errors
+      log('Local notification error: $e');
     }
   }
 }

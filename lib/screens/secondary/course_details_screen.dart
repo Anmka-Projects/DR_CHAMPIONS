@@ -13,6 +13,7 @@ import '../../l10n/app_localizations.dart';
 import '../../services/courses_service.dart';
 import '../../services/exams_service.dart';
 import '../../core/api/api_client.dart';
+import '../../services/lesson_resume_service.dart';
 import '../../services/wishlist_service.dart';
 import '../../services/profile_service.dart';
 import '../../services/token_storage_service.dart';
@@ -115,10 +116,18 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   List<Map<String, dynamic>> _courseExams = [];
   List<Map<String, dynamic>> _courseAssignments = [];
   bool _isLoadingExams = false;
+  String? _startingExamId;
   bool _isInWishlist = false;
   bool _isTogglingWishlist = false;
   bool _isViewingOwnCourse = false;
   final Map<String, bool> _expandedModules = {};
+  String? _resumeLessonId;
+
+  @override
+  void setState(VoidCallback fn) {
+    if (!mounted) return;
+    super.setState(fn);
+  }
 
   @override
   void initState() {
@@ -326,6 +335,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                 courseDetails['is_in_wishlist'] == true;
             _isLoading = false;
           });
+          _loadResumeLessonState(courseDetails);
           _loadCourseAssignments();
           _loadCourseExams();
           _checkWishlistStatus();
@@ -347,6 +357,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
             _courseData = widget.course; // Fallback to provided course
             _isLoading = false;
           });
+          _loadResumeLessonState(widget.course);
           _loadCourseAssignments();
           _checkIfViewingOwnCourse(widget.course);
         }
@@ -354,6 +365,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         setState(() {
           _courseData = widget.course;
         });
+        _loadResumeLessonState(widget.course);
         _loadCourseAssignments();
         _checkIfViewingOwnCourse(widget.course);
       }
@@ -361,6 +373,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       setState(() {
         _courseData = widget.course;
       });
+      _loadResumeLessonState(widget.course);
       _loadCourseAssignments();
       _checkIfViewingOwnCourse(widget.course);
     }
@@ -394,6 +407,109 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     return selectFirstLessonForPlayback(_courseData ?? widget.course);
   }
 
+  List<Map<String, dynamic>> _collectCourseLessons(
+      Map<String, dynamic>? course) {
+    if (course == null) return const [];
+    final collected = <Map<String, dynamic>>[];
+    final seenIds = <String>{};
+
+    void addLesson(Map<String, dynamic> lesson) {
+      final type = lesson['type']?.toString().toLowerCase();
+      if (type == 'assignment' || type == 'homework' || type == 'task') return;
+      final id = lesson['id']?.toString();
+      if (id == null || id.isEmpty || seenIds.contains(id)) return;
+      seenIds.add(id);
+      collected.add(lesson);
+    }
+
+    void scanItems(List<dynamic> items) {
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        if (_isDirectLessonItem(item)) addLesson(item);
+
+        final nestedLessons = item['lessons'];
+        if (nestedLessons is List) scanItems(nestedLessons);
+        final subModules = item['sub_modules'];
+        if (subModules is List) scanItems(subModules);
+        final subSections = item['subsections'];
+        if (subSections is List) scanItems(subSections);
+      }
+    }
+
+    final curriculum = course['curriculum'];
+    if (curriculum is List && curriculum.isNotEmpty) scanItems(curriculum);
+    final lessons = course['lessons'];
+    if (lessons is List && lessons.isNotEmpty) scanItems(lessons);
+    return collected;
+  }
+
+  Future<void> _loadResumeLessonState(Map<String, dynamic>? course) async {
+    final courseId = course?['id']?.toString();
+    if (courseId == null || courseId.isEmpty) return;
+
+    final saved =
+        await LessonResumeService.instance.getLastOpenedLesson(courseId);
+    final savedLessonId = saved?['lessonId']?.toString();
+    if (savedLessonId == null || savedLessonId.isEmpty || !mounted) return;
+
+    final lessons = _collectCourseLessons(course);
+    final resumeIndex =
+        lessons.indexWhere((item) => item['id']?.toString() == savedLessonId);
+    if (resumeIndex < 0) return;
+
+    setState(() {
+      _resumeLessonId = savedLessonId;
+      _selectedLessonIndex = resumeIndex;
+    });
+  }
+
+  Map<String, dynamic>? _getResumeLesson() {
+    final resumeId = _resumeLessonId;
+    if (resumeId == null || resumeId.isEmpty) return null;
+    final lessons = _collectCourseLessons(_courseData ?? widget.course);
+    for (final lesson in lessons) {
+      if (lesson['id']?.toString() == resumeId) return lesson;
+    }
+    return null;
+  }
+
+  Future<void> _openLesson(Map<String, dynamic> lesson,
+      {int? indexHint}) async {
+    final course = _courseData ?? widget.course;
+    final courseId = course?['id']?.toString();
+    final lessonId = lesson['id']?.toString();
+    final lessonTitle = lesson['title']?.toString();
+
+    if (courseId != null &&
+        courseId.isNotEmpty &&
+        lessonId != null &&
+        lessonId.isNotEmpty) {
+      await LessonResumeService.instance.saveLastOpenedLesson(
+        courseId: courseId,
+        lessonId: lessonId,
+        lessonTitle: lessonTitle,
+      );
+      if (mounted) {
+        setState(() {
+          _resumeLessonId = lessonId;
+        });
+      }
+    }
+
+    if (!mounted) return;
+    if (indexHint != null && indexHint >= 0) {
+      setState(() {
+        _selectedLessonIndex = indexHint;
+      });
+    }
+
+    context.push(RouteNames.lessonViewer, extra: {
+      'lesson': lesson,
+      'courseId': courseId,
+    });
+  }
+
   void _playLesson(int index, Map<String, dynamic> lesson) async {
     if (kDebugMode) {
       print('═══════════════════════════════════════════════════════════');
@@ -406,19 +522,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       print('═══════════════════════════════════════════════════════════');
     }
 
-    setState(() {
-      _selectedLessonIndex = index;
-    });
-
-    // Navigate to lesson viewer screen
-    if (mounted) {
-      final course = _courseData ?? widget.course;
-      final courseId = course?['id']?.toString();
-      context.push(RouteNames.lessonViewer, extra: {
-        'lesson': lesson,
-        'courseId': courseId,
-      });
-    }
+    await _openLesson(lesson, indexHint: index);
   }
 
   @override
@@ -583,15 +687,16 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
               child: Center(
                 child: GestureDetector(
                   onTap: () {
-                    // Navigate to first lesson
-                    final firstLesson = _getFirstLesson();
-                    if (firstLesson != null && mounted) {
-                      final course = _courseData ?? widget.course;
-                      final courseId = course?['id']?.toString();
-                      context.push(RouteNames.lessonViewer, extra: {
-                        'lesson': firstLesson,
-                        'courseId': courseId,
-                      });
+                    final lessonToOpen =
+                        _getResumeLesson() ?? _getFirstLesson();
+                    if (lessonToOpen != null && mounted) {
+                      final allLessons =
+                          _collectCourseLessons(_courseData ?? widget.course);
+                      final resumeIndex = allLessons.indexWhere((l) =>
+                          l['id']?.toString() ==
+                          lessonToOpen['id']?.toString());
+                      _openLesson(lessonToOpen,
+                          indexHint: resumeIndex >= 0 ? resumeIndex : null);
                     }
                   },
                   child: Container(
@@ -1718,29 +1823,49 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       if (!mounted) return;
       Navigator.of(context).pop();
 
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (_) => AssignmentDetailSubmissionSheet(
-          courseId: courseId,
-          assignmentId: assignmentId,
-          courseTitle: course?['title']?.toString(),
-          details: details,
-          listRow: assignment,
-          onViewPdf: (url, t) {
-            Future.microtask(() {
-              if (!mounted) return;
-              context.push(
-                RouteNames.pdfViewer,
-                extra: {'pdfUrl': url, 'title': t},
-              );
-            });
-          },
-          onSubmitted: _loadCourseAssignments,
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            backgroundColor: AppColors.beige,
+            appBar: AppBar(
+              backgroundColor: Theme.of(context).appBarTheme.backgroundColor ??
+                  AppColors.purple,
+              surfaceTintColor: Theme.of(context).appBarTheme.backgroundColor ??
+                  AppColors.purple,
+              elevation: 0,
+              title: Text(
+                Localizations.localeOf(context).languageCode == 'ar'
+                    ? 'الواجب'
+                    : 'Assignment',
+                style: GoogleFonts.cairo(
+                  color: Theme.of(context).appBarTheme.foregroundColor ??
+                      Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              iconTheme: IconThemeData(
+                color: Theme.of(context).appBarTheme.foregroundColor ??
+                    Colors.white,
+              ),
+            ),
+            body: AssignmentDetailSubmissionSheet(
+              courseId: courseId,
+              assignmentId: assignmentId,
+              courseTitle: course?['title']?.toString(),
+              details: details,
+              listRow: assignment,
+              onViewPdf: (url, t) {
+                Future.microtask(() {
+                  if (!mounted) return;
+                  context.push(
+                    RouteNames.pdfViewer,
+                    extra: {'pdfUrl': url, 'title': t},
+                  );
+                });
+              },
+              onSubmitted: _loadCourseAssignments,
+            ),
+          ),
         ),
       );
     } catch (e) {
@@ -1935,6 +2060,10 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     final examTitle =
         exam['title']?.toString() ?? AppLocalizations.of(context)!.exam;
     final examDescription = exam['description']?.toString() ?? '';
+    final isStartingThisExam = _startingExamId == examId;
+    final hasCompletedExam =
+        bestScore != null || attemptsUsed > 0 || isPassed == true;
+    final scoreText = bestScore == null ? null : '${bestScore.toString()}%';
 
     // Determine if it's a trial exam
     final isTrial = exam['type'] == 'trial' ||
@@ -2110,8 +2239,55 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                   ),
                 ],
                 const SizedBox(height: 16),
+                if (hasCompletedExam) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      color: isPassed
+                          ? const Color(0xFF10B981).withValues(alpha: 0.16)
+                          : const Color(0xFFF59E0B).withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isPassed
+                            ? const Color(0xFF10B981).withValues(alpha: 0.45)
+                            : const Color(0xFFF59E0B).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.grade_rounded,
+                          color: isPassed
+                              ? const Color(0xFF047857)
+                              : const Color(0xFFB45309),
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          scoreText == null
+                              ? (isPassed
+                                  ? 'تم اجتياز الامتحان'
+                                  : 'تم إنهاء الامتحان')
+                              : 'درجتك: $scoreText',
+                          style: GoogleFonts.cairo(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: isPassed
+                                ? const Color(0xFF047857)
+                                : const Color(0xFFB45309),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 GestureDetector(
-                  onTap: canStart ? () => _startExam(examId, exam) : null,
+                  onTap: canStart && !isStartingThisExam
+                      ? () => _startExam(examId, exam)
+                      : null,
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -2126,24 +2302,40 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          canStart
-                              ? Icons.play_arrow_rounded
-                              : Icons.lock_rounded,
-                          color: canStart
-                              ? (isTrial ? AppColors.purple : Colors.white)
-                              : Colors.grey,
-                          size: 22,
-                        ),
+                        isStartingThisExam
+                            ? SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.2,
+                                  color:
+                                      isTrial ? AppColors.purple : Colors.white,
+                                ),
+                              )
+                            : Icon(
+                                canStart
+                                    ? Icons.play_arrow_rounded
+                                    : Icons.lock_rounded,
+                                color: canStart
+                                    ? (isTrial
+                                        ? AppColors.purple
+                                        : Colors.white)
+                                    : Colors.grey,
+                                size: 22,
+                              ),
                         const SizedBox(width: 8),
                         Text(
-                          canStart
-                              ? AppLocalizations.of(context)!.startExamButton
-                              : (maxAttempts != null &&
-                                      attemptsUsed >= maxAttempts
+                          isStartingThisExam
+                              ? AppLocalizations.of(context)!.loadingExam
+                              : canStart
                                   ? AppLocalizations.of(context)!
-                                      .attemptsExhausted
-                                  : AppLocalizations.of(context)!.notAvailable),
+                                      .startExamButton
+                                  : (maxAttempts != null &&
+                                          attemptsUsed >= maxAttempts
+                                      ? AppLocalizations.of(context)!
+                                          .attemptsExhausted
+                                      : AppLocalizations.of(context)!
+                                          .notAvailable),
                           style: GoogleFonts.cairo(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
@@ -2808,13 +3000,9 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     setState(() => _isLoadingExams = true);
 
     try {
-      List<Map<String, dynamic>> exams = [];
-      try {
-        exams = await ExamsService.instance.getCourseExams(courseId);
-      } catch (e) {
-        if (kDebugMode) {
-          print('⚠️ getCourseExams failed: $e');
-        }
+      var exams = await ExamsService.instance.getCourseExams(courseId);
+      if (exams.isEmpty) {
+        exams = _extractExamsFromCourse(course);
       }
 
       // Exams tab: exams API only (assignments stay on Assignments tab).
@@ -2871,8 +3059,114 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         print('Error Type: ${e.runtimeType}');
         print('═══════════════════════════════════════════════════════════');
       }
-      setState(() => _isLoadingExams = false);
+      final fallback = _extractExamsFromCourse(course);
+      if (fallback.isNotEmpty) {
+        if (kDebugMode) {
+          print(
+              'ℹ️ Using exams fallback from course payload: ${fallback.length}');
+        }
+        setState(() {
+          _courseExams = fallback;
+          _isLoadingExams = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _courseExams = [];
+        _isLoadingExams = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _resolveExamsListError(e),
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
     }
+  }
+
+  List<Map<String, dynamic>> _extractExamsFromCourse(
+      Map<String, dynamic> course) {
+    final exams = <Map<String, dynamic>>[];
+
+    void addExam(dynamic raw) {
+      if (raw is! Map) return;
+      final item = Map<String, dynamic>.from(raw);
+      final title = item['title']?.toString().trim();
+      if (title == null || title.isEmpty) return;
+
+      final type = item['type']?.toString().toLowerCase();
+      final isExamType = type == 'exam' ||
+          type == 'trial_exam' ||
+          type == 'quiz' ||
+          type == 'test' ||
+          item['questions_count'] != null;
+      if (!isExamType) return;
+
+      exams.add({
+        ...item,
+        'type': item['type'] ?? 'exam',
+        'can_start': item['can_start'] ?? true,
+      });
+    }
+
+    final directKeys = ['exams', 'course_exams', 'quizzes', 'tests'];
+    for (final key in directKeys) {
+      final raw = course[key];
+      if (raw is List) {
+        for (final item in raw) {
+          addExam(item);
+        }
+      }
+    }
+
+    final curriculum = course['curriculum'];
+    if (curriculum is List) {
+      void scanItems(List<dynamic> items) {
+        for (final rawItem in items) {
+          if (rawItem is! Map) continue;
+          addExam(rawItem);
+
+          final item = Map<String, dynamic>.from(rawItem);
+          final nestedLessons = item['lessons'];
+          if (nestedLessons is List) {
+            scanItems(nestedLessons);
+          }
+          final nestedSubsections = item['subsections'];
+          if (nestedSubsections is List) {
+            scanItems(nestedSubsections);
+          }
+        }
+      }
+
+      scanItems(curriculum);
+    }
+
+    return exams;
+  }
+
+  String _resolveExamsListError(Object error) {
+    if (error is ApiException) {
+      if (error.statusCode == 401) {
+        return AppLocalizations.of(context)!.mustLoginFirst;
+      }
+      if (error.statusCode == 404) {
+        return 'لا توجد امتحانات متاحة لهذا الكورس حالياً';
+      }
+      if (error.message.isNotEmpty) {
+        return error.message;
+      }
+    }
+    return AppLocalizations.of(context)!.errorStartingExam;
   }
 
   Future<void> _loadCourseAssignments() async {
@@ -2932,7 +3226,12 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       });
     }
 
-    final directKeys = ['assignments', 'course_assignments', 'homeworks', 'tasks'];
+    final directKeys = [
+      'assignments',
+      'course_assignments',
+      'homeworks',
+      'tasks'
+    ];
     for (final key in directKeys) {
       final raw = course[key];
       if (raw is List) {
@@ -3173,8 +3472,10 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     if (courseId == null || courseId.isEmpty) return;
 
     try {
+      setState(() => _startingExamId = examId);
       // Start exam via API
-      final examSession = await ExamsService.instance.startExam(examId);
+      final examSession =
+          await ExamsService.instance.startExam(courseId, examId);
 
       // Print detailed response
       if (kDebugMode) {
@@ -3231,11 +3532,12 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       }
 
       if (mounted) {
-        Navigator.push(
+        final submittedResult = await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => TrialExamScreen(
               examId: examId,
+              courseId: courseId,
               attemptId: attemptId,
               courseName:
                   (_courseData ?? widget.course)?['title']?.toString() ??
@@ -3245,6 +3547,14 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
             ),
           ),
         );
+
+        if (!mounted) return;
+        if (submittedResult is Map<String, dynamic>) {
+          _applyInstantExamResult(examId, submittedResult);
+        } else if (submittedResult is Map) {
+          _applyInstantExamResult(
+              examId, Map<String, dynamic>.from(submittedResult));
+        }
       }
     } catch (e) {
       if (kDebugMode) {
@@ -3255,10 +3565,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              e.toString().contains('401') ||
-                      e.toString().contains('Unauthorized')
-                  ? AppLocalizations.of(context)!.mustLoginFirst
-                  : AppLocalizations.of(context)!.errorStartingExam,
+              _resolveExamStartError(e),
               style: GoogleFonts.cairo(),
             ),
             backgroundColor: Colors.red,
@@ -3269,7 +3576,73 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
           ),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _startingExamId = null);
+      }
     }
+  }
+
+  String _resolveExamStartError(Object error) {
+    if (error is ApiException) {
+      if (error.statusCode == 401) {
+        return AppLocalizations.of(context)!.mustLoginFirst;
+      }
+      if (error.statusCode == 404) {
+        return 'الامتحان أو الكورس غير موجود حالياً';
+      }
+      if (error.statusCode == 400) {
+        return error.message.isNotEmpty
+            ? error.message
+            : 'لا يمكن بدء الامتحان حالياً';
+      }
+      if (error.message.isNotEmpty) {
+        return error.message;
+      }
+    }
+
+    final message = error.toString();
+    if (message.contains('401') ||
+        message.toLowerCase().contains('unauthorized')) {
+      return AppLocalizations.of(context)!.mustLoginFirst;
+    }
+    if (message.contains('404')) {
+      return 'الامتحان أو الكورس غير موجود حالياً';
+    }
+    if (message.contains('400')) {
+      return 'لا يمكن بدء الامتحان حالياً';
+    }
+    return AppLocalizations.of(context)!.errorStartingExam;
+  }
+
+  void _applyInstantExamResult(String examId, Map<String, dynamic> result) {
+    setState(() {
+      _courseExams = _courseExams.map((exam) {
+        final id = exam['id']?.toString();
+        if (id != examId) return exam;
+
+        final updated = Map<String, dynamic>.from(exam);
+        final score = result['score'];
+        if (score != null) {
+          updated['best_score'] = score;
+        }
+
+        if (result['is_passed'] != null) {
+          updated['is_passed'] = result['is_passed'] == true;
+        }
+
+        final attemptsUsedRaw = updated['attempts_used'];
+        if (attemptsUsedRaw is int) {
+          updated['attempts_used'] = attemptsUsedRaw + 1;
+        } else if (attemptsUsedRaw is num) {
+          updated['attempts_used'] = attemptsUsedRaw.toInt() + 1;
+        } else {
+          updated['attempts_used'] = 1;
+        }
+
+        return updated;
+      }).toList();
+    });
   }
 
   Widget _buildSkeleton() {
@@ -3410,6 +3783,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
 /// Trial Exam Screen
 class TrialExamScreen extends StatefulWidget {
   final String examId;
+  final String courseId;
   final String? attemptId;
   final String courseName;
   final Map<String, dynamic>? examData;
@@ -3419,6 +3793,7 @@ class TrialExamScreen extends StatefulWidget {
   const TrialExamScreen({
     super.key,
     required this.examId,
+    required this.courseId,
     this.attemptId,
     required this.courseName,
     this.examData,
@@ -3435,6 +3810,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
   final Map<int, List<String>> _selectedAnswers =
       {}; // For multiple choice questions
   final Map<int, String?> _singleAnswers = {}; // For single choice questions
+  final Map<int, TextEditingController> _textAnswerControllers = {};
   bool _showResult = false;
   bool _isSubmitting = false;
   Map<String, dynamic>? _examResult;
@@ -3463,7 +3839,24 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
     for (int i = 0; i < _questions.length; i++) {
       _singleAnswers[i] = null;
       _selectedAnswers[i] = [];
+      _textAnswerControllers[i] = TextEditingController();
     }
+  }
+
+  bool _isTextQuestion(Map<String, dynamic> question) {
+    final type = question['type']?.toString().toLowerCase().trim() ?? '';
+    final answerType =
+        question['answer_type']?.toString().toLowerCase().trim() ?? '';
+    final format =
+        question['answer_format']?.toString().toLowerCase().trim() ?? '';
+    final options = question['options'] as List? ?? [];
+    if (options.isEmpty) return true;
+    return type.contains('text') ||
+        type.contains('essay') ||
+        answerType.contains('text') ||
+        answerType.contains('essay') ||
+        format.contains('text') ||
+        format.contains('essay');
   }
 
   void _selectAnswer(int optionIndex) {
@@ -3507,6 +3900,14 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
 
   bool get _hasSelectedAnswer {
     final question = _questions[_currentQuestionIndex];
+    final isText = _isTextQuestion(question);
+    if (isText) {
+      return (_textAnswerControllers[_currentQuestionIndex]
+              ?.text
+              .trim()
+              .isNotEmpty ??
+          false);
+    }
     final isMultiple = question['is_multiple'] == true ||
         question['type'] == 'multiple_choice';
 
@@ -3535,11 +3936,22 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
 
         final isMultiple = question['is_multiple'] == true ||
             question['type'] == 'multiple_choice';
+        final isText = _isTextQuestion(question);
 
-        if (isMultiple) {
+        if (isText) {
+          final textAnswer = _textAnswerControllers[i]?.text.trim() ?? '';
+          if (textAnswer.isNotEmpty) {
+            answers.add({
+              'question_id': questionId,
+              'answer': textAnswer,
+            });
+          }
+        } else if (isMultiple) {
           final selected = _selectedAnswers[i] ?? [];
+          final answerValue = selected.join(',');
           answers.add({
             'question_id': questionId,
+            'answer': answerValue,
             'selected_options': selected,
           });
         } else {
@@ -3547,6 +3959,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
           if (selected != null) {
             answers.add({
               'question_id': questionId,
+              'answer': selected,
               'selected_options': [selected],
             });
           }
@@ -3577,6 +3990,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
       }
 
       final result = await ExamsService.instance.submitExam(
+        widget.courseId,
         widget.examId,
         attemptId: _attemptId!,
         answers: answers,
@@ -3661,6 +4075,14 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
   }
 
   @override
+  void dispose() {
+    for (final c in _textAnswerControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (_questions.isEmpty) {
       return Scaffold(
@@ -3705,6 +4127,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
 
     final question = _questions[_currentQuestionIndex];
     final options = question['options'] as List? ?? [];
+    final isText = _isTextQuestion(question);
     final isMultiple = question['is_multiple'] == true ||
         question['type'] == 'multiple_choice';
 
@@ -3776,92 +4199,148 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Options
-            ...List.generate(options.length, (index) {
-              final option = options[index];
-              final optionId = option['id']?.toString() ??
-                  option['option_id']?.toString() ??
-                  index.toString();
-
-              bool isSelected = false;
-              if (isMultiple) {
-                final selected = _selectedAnswers[_currentQuestionIndex] ?? [];
-                isSelected = selected.contains(optionId);
-              } else {
-                isSelected = _singleAnswers[_currentQuestionIndex] == optionId;
-              }
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: GestureDetector(
-                  onTap: () => _selectAnswer(index),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.purple.withOpacity(0.1)
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isSelected
-                            ? AppColors.purple
-                            : Colors.grey.withOpacity(0.2),
-                        width: isSelected ? 2 : 1,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? AppColors.purple
-                                : Colors.grey[100],
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: isSelected && isMultiple
-                                ? const Icon(
-                                    Icons.check,
-                                    color: Colors.white,
-                                    size: 20,
-                                  )
-                                : Text(
-                                    String.fromCharCode(1571 + index),
-                                    style: GoogleFonts.cairo(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : AppColors.mutedForeground,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Text(
-                            option['text']?.toString() ??
-                                option['option']?.toString() ??
-                                option.toString(),
-                            style: GoogleFonts.cairo(
-                              fontSize: 15,
-                              fontWeight: isSelected
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                              color: isSelected
-                                  ? AppColors.purple
-                                  : AppColors.foreground,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+            if (isText) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.purple.withValues(alpha: 0.2),
                   ),
                 ),
-              );
-            }),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'اكتب إجابتك',
+                      style: GoogleFonts.cairo(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _textAnswerControllers[_currentQuestionIndex],
+                      minLines: 4,
+                      maxLines: 8,
+                      textInputAction: TextInputAction.newline,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'اكتب إجابة السؤال النصي هنا...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Colors.grey.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: AppColors.purple,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
+                      style: GoogleFonts.cairo(fontSize: 15),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              ...List.generate(options.length, (index) {
+                final option = options[index];
+                final optionId = option['id']?.toString() ??
+                    option['option_id']?.toString() ??
+                    index.toString();
+
+                bool isSelected = false;
+                if (isMultiple) {
+                  final selected =
+                      _selectedAnswers[_currentQuestionIndex] ?? [];
+                  isSelected = selected.contains(optionId);
+                } else {
+                  isSelected =
+                      _singleAnswers[_currentQuestionIndex] == optionId;
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: GestureDetector(
+                    onTap: () => _selectAnswer(index),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? AppColors.purple.withOpacity(0.1)
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppColors.purple
+                              : Colors.grey.withOpacity(0.2),
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppColors.purple
+                                  : Colors.grey[100],
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: isSelected && isMultiple
+                                  ? const Icon(
+                                      Icons.check,
+                                      color: Colors.white,
+                                      size: 20,
+                                    )
+                                  : Text(
+                                      String.fromCharCode(1571 + index),
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: isSelected
+                                            ? Colors.white
+                                            : AppColors.mutedForeground,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              option['text']?.toString() ??
+                                  option['option']?.toString() ??
+                                  option.toString(),
+                              style: GoogleFonts.cairo(
+                                fontSize: 15,
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: isSelected
+                                    ? AppColors.purple
+                                    : AppColors.foreground,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
 
             const SizedBox(height: 20),
 
@@ -4008,7 +4487,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                 ],
                 const SizedBox(height: 40),
                 GestureDetector(
-                  onTap: () => Navigator.pop(context),
+                  onTap: () => Navigator.pop(context, _examResult),
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 16),

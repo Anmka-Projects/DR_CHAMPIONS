@@ -33,6 +33,7 @@ class _EnrolledScreenState extends State<EnrolledScreen> {
   }
 
   Future<void> _loadEnrollments() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       final response = await CoursesService.instance.getEnrollments(
@@ -40,6 +41,7 @@ class _EnrolledScreenState extends State<EnrolledScreen> {
         page: 1,
         perPage: 20,
       );
+      if (!mounted) return;
 
       if (kDebugMode) {
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -158,6 +160,7 @@ class _EnrolledScreenState extends State<EnrolledScreen> {
         print('❌ Error loading enrollments: $e');
         print('  Error type: ${e.runtimeType}');
       }
+      if (!mounted) return;
       setState(() {
         _enrolledCourses = [];
         _meta = null;

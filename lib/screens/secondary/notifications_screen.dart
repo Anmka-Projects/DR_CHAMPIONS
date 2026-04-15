@@ -1,5 +1,6 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -8,8 +9,9 @@ import '../../core/design/app_text_styles.dart';
 import '../../core/design/app_radius.dart';
 import '../../core/localization/localization_helper.dart';
 import '../../services/notifications_service.dart';
+import '../../services/push_inbox_service.dart';
 
-/// Notifications Screen - Connected to API
+/// Notifications screen: LMS API list merged with FCM messages stored on device.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -21,11 +23,44 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   bool _isLoading = true;
   List<Map<String, dynamic>> _notifications = [];
   int _unreadCount = 0;
+  StreamSubscription<void>? _inboxSub;
 
   @override
   void initState() {
     super.initState();
     _loadNotifications();
+    _inboxSub = PushInboxService.onInboxChanged.listen((_) {
+      if (mounted) _loadNotifications();
+    });
+  }
+
+  @override
+  void dispose() {
+    _inboxSub?.cancel();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> _mergeWithPushInbox(
+    List<Map<String, dynamic>> apiList,
+    List<Map<String, dynamic>> localList,
+  ) {
+    final merged = <Map<String, dynamic>>[...localList, ...apiList];
+    merged.sort((a, b) {
+      final da = DateTime.tryParse(a['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final db = DateTime.tryParse(b['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
+    final seen = <String>{};
+    final out = <Map<String, dynamic>>[];
+    for (final n in merged) {
+      final id = n['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      if (!seen.add(id)) continue;
+      out.add(n);
+    }
+    return out;
   }
 
   Future<void> _loadNotifications() async {
@@ -85,20 +120,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         }
       }
 
-      // Get unread count from meta or calculate it
-      int unreadCount = 0;
-      if (response['meta'] != null && response['meta'] is Map) {
-        unreadCount = (response['meta'] as Map)['unread_count'] ?? 0;
-      } else if (response['data'] != null && response['data'] is Map) {
-        unreadCount = (response['data'] as Map)['unread_count'] ?? 0;
-      }
+      final localPush = await PushInboxService.instance.getAll();
+      notificationsList = _mergeWithPushInbox(notificationsList, localPush);
 
-      // If unread_count is 0, calculate from notifications
-      if (unreadCount == 0) {
-        unreadCount = notificationsList
-            .where((n) => (n['is_read'] ?? false) == false)
-            .length;
-      }
+      final unreadCount = notificationsList
+          .where((n) => (n['is_read'] ?? false) == false)
+          .length;
 
       setState(() {
         _notifications = notificationsList;
@@ -124,6 +151,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _markAsRead(String notificationId) async {
+    final idx =
+        _notifications.indexWhere((n) => n['id']?.toString() == notificationId);
+    final isLocalFcm = idx >= 0 &&
+        _notifications[idx]['source']?.toString() == 'fcm_local';
+    if (isLocalFcm) {
+      try {
+        await PushInboxService.instance.markAsRead(notificationId);
+        if (mounted) await _loadNotifications();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content:
+                  Text(context.l10n.errorUpdatingNotification(e.toString())),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+      return;
+    }
+
     try {
       await NotificationsService.instance.markAsRead(notificationId);
       // Update local state immediately for better UX
@@ -153,6 +203,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _markAllAsRead() async {
     try {
+      await PushInboxService.instance.markAllRead();
       await NotificationsService.instance.markAllAsRead();
       // Update local state immediately
       setState(() {
@@ -218,6 +269,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       'message': Icons.message,
       'campaign': Icons.campaign,
       'announcement': Icons.campaign,
+      'notifications_active': Icons.notifications_active,
       'course': Icons.school,
       'school': Icons.school,
       'update': Icons.update,
@@ -348,10 +400,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 offset: const Offset(0, -16), // -mt-4
                 child: _isLoading
                     ? _buildNotificationsSkeleton()
-                    : SingleChildScrollView(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 16), // px-4
-                        child: Column(
+                    : RefreshIndicator(
+                        onRefresh: _loadNotifications,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16), // px-4
+                          child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const SizedBox(height: 24), // space-y-6
@@ -488,6 +543,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           ],
                         ),
                       ),
+                    ),
               ),
             ),
           ],

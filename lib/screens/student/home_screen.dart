@@ -60,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _loadHomeData() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -67,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       // Load home data
       final homeData = await HomeService.instance.getHomeData();
+      if (!mounted) return;
 
       // Load user profile if logged in
       try {
@@ -88,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           }
           print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         }
+        if (!mounted) return;
         setState(() => _userProfile = profile);
       } catch (e) {
         // User might not be logged in, continue
@@ -103,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           unreadOnly: true,
           perPage: 1,
         );
+        if (!mounted) return;
         setState(() =>
             _notificationsCount = notifications['meta']?['unread_count'] ?? 0);
       } catch (e) {
@@ -128,6 +132,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         teachers = List<Map<String, dynamic>>.from(kSampleTeachers);
       }
 
+      if (!mounted) return;
       setState(() {
         _homeData = homeData;
         _featuredCourses = List<Map<String, dynamic>>.from(
@@ -148,6 +153,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     } catch (e) {
       // Show error message instead of fallback data
+      if (!mounted) return;
       setState(() {
         _errorMessage = e.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
@@ -1806,7 +1812,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               : raw is num
                                   ? raw.toInt()
                                   : int.tryParse(raw.toString()) ?? 0;
-                          return AppLocalizations.of(context)!.coursesCount(count);
+                          return AppLocalizations.of(context)!
+                              .coursesCount(count);
                         }(),
                         style: GoogleFonts.cairo(
                           fontSize: 10,

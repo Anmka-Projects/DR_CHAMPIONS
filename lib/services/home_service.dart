@@ -128,10 +128,28 @@ class HomeService {
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       }
 
-      final response = await ApiClient.instance.get(
-        ApiEndpoints.home,
-        requireAuth: true,
-      );
+      Future<Map<String, dynamic>> fetch({required bool requireAuth}) {
+        return ApiClient.instance.get(
+          ApiEndpoints.home,
+          requireAuth: requireAuth,
+        );
+      }
+
+      Map<String, dynamic> response;
+      try {
+        response = await fetch(requireAuth: true);
+      } on ApiException catch (e) {
+        final msg = e.message.toLowerCase();
+        // Backend can fail personalized /home with DB issues; retry public home once.
+        if (e.statusCode == 500 || msg.contains('database error')) {
+          if (kDebugMode) {
+            print('↩️ Retrying /home without auth due to backend DB error...');
+          }
+          response = await fetch(requireAuth: false);
+        } else {
+          rethrow;
+        }
+      }
 
       // Log response details
       if (kDebugMode) {

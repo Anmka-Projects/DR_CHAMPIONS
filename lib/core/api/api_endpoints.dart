@@ -91,12 +91,22 @@ class ApiEndpoints {
   static String exam(String id) => '$baseUrl/admin/exams/$id';
   static String startExam(String id) => '$baseUrl/admin/exams/$id/start';
   static String submitExam(String id) => '$baseUrl/admin/exams/$id/submit';
+  static String myExamResults({int page = 1, int perPage = 20, String? courseId}) {
+    final courseFilter = (courseId != null && courseId.isNotEmpty)
+        ? '&course_id=$courseId'
+        : '';
+    return '$baseUrl/my-exam-results?page=$page&per_page=$perPage$courseFilter';
+  }
 
   // Course Exams
   static String courseExams(String courseId) =>
       '$baseUrl/courses/$courseId/exams';
   static String courseExamDetails(String courseId, String examId) =>
       '$baseUrl/courses/$courseId/exams/$examId';
+  static String courseExamStart(String courseId, String examId) =>
+      '$baseUrl/courses/$courseId/exams/$examId/start';
+  static String courseExamSubmit(String courseId, String examId) =>
+      '$baseUrl/courses/$courseId/exams/$examId/submit';
   static String courseAssignments(String courseId) =>
       '$baseUrl/courses/$courseId/assignments';
   static String courseAssignmentDetails(String courseId, String assignmentId) =>

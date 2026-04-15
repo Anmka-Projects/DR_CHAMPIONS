@@ -14,6 +14,14 @@ class ApiClient {
 
   bool _isRefreshing = false;
 
+  String _normalizeBearerToken(String token) {
+    final trimmed = token.trim();
+    if (trimmed.toLowerCase().startsWith('bearer ')) {
+      return trimmed.substring(7).trim();
+    }
+    return trimmed;
+  }
+
   /// Attempt to refresh the access token using the stored refresh token.
   Future<bool> _tryRefreshToken() async {
     if (_isRefreshing) return false;
@@ -214,11 +222,12 @@ class ApiClient {
       }
 
       if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
+        final normalizedToken = _normalizeBearerToken(token);
+        headers['Authorization'] = 'Bearer $normalizedToken';
         if (kDebugMode) {
           print('  ✅ Authorization header added from cache');
           print(
-              '  token preview: ${token.length > 20 ? "${token.substring(0, 20)}..." : token}');
+              '  token preview: ${normalizedToken.length > 20 ? "${normalizedToken.substring(0, 20)}..." : normalizedToken}');
         }
       } else {
         if (kDebugMode) {
@@ -545,10 +554,11 @@ class ApiClient {
       if (requireAuth) {
         final token = await TokenStorageService.instance.getAccessToken();
         if (token != null && token.isNotEmpty) {
-          request.headers['Authorization'] = 'Bearer $token';
+          final normalizedToken = _normalizeBearerToken(token);
+          request.headers['Authorization'] = 'Bearer $normalizedToken';
           if (kDebugMode) {
             print(
-                '🔑 Avatar Upload - Token added: ${token.length > 20 ? "${token.substring(0, 20)}..." : token}');
+                '🔑 Avatar Upload - Token added: ${normalizedToken.length > 20 ? "${normalizedToken.substring(0, 20)}..." : normalizedToken}');
           }
         } else {
           if (kDebugMode) {

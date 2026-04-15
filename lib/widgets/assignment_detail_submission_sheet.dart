@@ -164,6 +164,27 @@ class _AssignmentDetailSubmissionSheetState
 
   bool get _pastDue => assignmentDueDateIsPast(_dueDate);
 
+  bool get _alreadySubmitted {
+    final sub = _submission;
+    if (sub == null || sub.isEmpty) return false;
+
+    final status = sub['status']?.toString().toLowerCase().trim() ?? '';
+    if (status == 'submitted' ||
+        status == 'pending' ||
+        status == 'graded' ||
+        status == 'reviewed' ||
+        status == 'done') {
+      return true;
+    }
+
+    final answerText = sub['answer_text']?.toString().trim() ?? '';
+    final files = sub['answer_files'];
+    final images = sub['answer_images'];
+    final hasFiles = files is List && files.isNotEmpty;
+    final hasImages = images is List && images.isNotEmpty;
+    return answerText.isNotEmpty || hasFiles || hasImages;
+  }
+
   Future<void> _downloadAssignmentPdfToAppDownloads() async {
     final url = _pdfUrl;
     if (url == null || url.isEmpty) return;
@@ -340,6 +361,21 @@ class _AssignmentDetailSubmissionSheetState
   }
 
   Future<void> _submit() async {
+    if (_alreadySubmitted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isAr
+                ? 'تم تسليم هذا الواجب بالفعل ولا يمكن تسليمه مرة أخرى'
+                : 'This assignment is already submitted and cannot be submitted again',
+            style: GoogleFonts.cairo(),
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     if (_pastDue) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -494,7 +530,7 @@ class _AssignmentDetailSubmissionSheetState
                 return RadioListTile<int>(
                   value: o,
                   groupValue: selected,
-                  onChanged: _pastDue || _submitting
+                  onChanged: _pastDue || _submitting || _alreadySubmitted
                       ? null
                       : (v) {
                           setState(() {
@@ -528,14 +564,14 @@ class _AssignmentDetailSubmissionSheetState
                   ),
                   trailing: IconButton(
                     icon: const Icon(Icons.close, size: 20),
-                    onPressed: _pastDue || _submitting
+                      onPressed: _pastDue || _submitting || _alreadySubmitted
                         ? null
                         : () => _clearQuestionImage(index),
                   ),
                 )
               else
                 OutlinedButton.icon(
-                  onPressed: _pastDue || _submitting
+                  onPressed: _pastDue || _submitting || _alreadySubmitted
                       ? null
                       : () => _pickQuestionImage(index),
                   icon: const Icon(Icons.add_photo_alternate_outlined, size: 20),
@@ -562,7 +598,7 @@ class _AssignmentDetailSubmissionSheetState
                       controller: _questionTextControllers[index],
                       minLines: 2,
                       maxLines: 5,
-                      enabled: !_pastDue && !_submitting,
+                      enabled: !_pastDue && !_submitting && !_alreadySubmitted,
                       decoration: InputDecoration(
                         hintText:
                             _isAr ? 'اكتب إجابتك' : 'Type your answer',
@@ -594,6 +630,7 @@ class _AssignmentDetailSubmissionSheetState
     final status = sub?['status']?.toString();
     final score = sub?['score']?.toString();
     final teacherNote = sub?['teacher_note']?.toString();
+    final lockSubmission = _alreadySubmitted;
     final hasPdf = _pdfUrl != null && _pdfUrl!.isNotEmpty;
     final questions = _questions;
     final hasQuestions = questions.isNotEmpty;
@@ -788,6 +825,43 @@ class _AssignmentDetailSubmissionSheetState
                   ),
                 ),
               ],
+              if (lockSubmission) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: Colors.orange.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        color: Colors.orange,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _isAr
+                              ? 'تم تسليم هذا الواجب بالفعل. لا يمكن تعديل الإجابات أو إعادة الرفع.'
+                              : 'This assignment is already submitted. Answers and uploads are now locked.',
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               if (score != null && score.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -822,7 +896,7 @@ class _AssignmentDetailSubmissionSheetState
                 controller: _answerController,
                 minLines: 2,
                 maxLines: 6,
-                enabled: !_pastDue && !_submitting,
+                enabled: !_pastDue && !_submitting && !lockSubmission,
                 decoration: InputDecoration(
                   hintText: _isAr
                       ? 'أي تفاصيل إضافية للمعلم…'
@@ -848,7 +922,9 @@ class _AssignmentDetailSubmissionSheetState
                 runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: _pastDue || _submitting ? null : _pickPdfSolutions,
+                    onPressed: _pastDue || _submitting || lockSubmission
+                        ? null
+                        : _pickPdfSolutions,
                     icon: const Icon(Icons.upload_file_rounded, size: 20),
                     label: Text(
                       _isAr ? 'إرفاق PDF' : 'Attach PDF',
@@ -856,8 +932,9 @@ class _AssignmentDetailSubmissionSheetState
                     ),
                   ),
                   OutlinedButton.icon(
-                    onPressed:
-                        _pastDue || _submitting ? null : _pickImageSolutions,
+                    onPressed: _pastDue || _submitting || lockSubmission
+                        ? null
+                        : _pickImageSolutions,
                     icon: const Icon(Icons.add_photo_alternate_outlined, size: 20),
                     label: Text(
                       _isAr ? 'إرفاق صور' : 'Attach images',
@@ -889,7 +966,7 @@ class _AssignmentDetailSubmissionSheetState
                     ),
                     trailing: IconButton(
                       icon: const Icon(Icons.close, size: 20),
-                      onPressed: _submitting
+                      onPressed: _submitting || lockSubmission
                           ? null
                           : () => setState(() => _pdfSolutions.removeAt(i)),
                     ),
@@ -919,7 +996,7 @@ class _AssignmentDetailSubmissionSheetState
                     ),
                     trailing: IconButton(
                       icon: const Icon(Icons.close, size: 20),
-                      onPressed: _submitting
+                      onPressed: _submitting || lockSubmission
                           ? null
                           : () => setState(() => _imageSolutions.removeAt(i)),
                     ),
@@ -938,7 +1015,8 @@ class _AssignmentDetailSubmissionSheetState
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  onPressed: _pastDue || _submitting ? null : _submit,
+                  onPressed:
+                      _pastDue || _submitting || lockSubmission ? null : _submit,
                   child: _submitting
                       ? const SizedBox(
                           height: 22,

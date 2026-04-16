@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../screens/startup/splash_screen.dart';
@@ -17,6 +18,7 @@ import '../../screens/instructor/instructor_create_course_screen.dart';
 import '../../screens/instructor/instructor_course_details_screen.dart';
 import '../../screens/instructor/instructor_session_details_screen.dart';
 import '../../screens/instructor/instructor_scan_qr_screen.dart';
+import '../../screens/debug/vimeo_test_screen.dart';
 import '../../screens/secondary/categories_screen.dart';
 import '../../screens/secondary/course_details_screen.dart';
 import '../../screens/secondary/lesson_viewer_screen.dart';
@@ -193,6 +195,15 @@ class AppRouter {
         pageBuilder: (context, state) => _buildPageWithTransition(
           key: state.pageKey,
           child: const CategoriesScreen(),
+        ),
+      ),
+      GoRoute(
+        path: RouteNames.vimeoTest,
+        redirect: (context, state) =>
+            kDebugMode ? null : RouteNames.home,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          key: state.pageKey,
+          child: const VimeoTestScreen(),
         ),
       ),
       GoRoute(

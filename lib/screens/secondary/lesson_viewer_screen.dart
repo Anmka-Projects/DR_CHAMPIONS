@@ -94,6 +94,24 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   Map<String, dynamic>? _pendingResume;
   bool _consumedVideoResumeSeek = false;
 
+  /// Avoid feedback when pausing the other player from exclusivity hooks.
+  bool _silencingOtherPlayback = false;
+  bool? _podWasPlaying;
+
+  static const String _lessonPanelDescription = 'description';
+  static const String _lessonPanelImages = 'images';
+  static const String _lessonPanelAudio = 'audio';
+  static const String _lessonPanelVideos = 'videos';
+  static const String _lessonPanelPdfs = 'pdfs';
+  static const String _lessonPanelDownload = 'download';
+  static const String _lessonPanelFiles = 'files';
+
+  String? _openLessonPanel;
+  bool _lessonAccordionUserInteracted = false;
+  String? _activePdfUrl;
+  WebViewController? _pdfWebViewController;
+  bool _isPdfLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -109,6 +127,227 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       _startProgressTracking();
       _checkIfDownloaded();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant LessonViewerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = oldWidget.lesson?['id']?.toString();
+    final newId = widget.lesson?['id']?.toString();
+    if (oldId != newId) {
+      _openLessonPanel = null;
+      _lessonAccordionUserInteracted = false;
+      unawaited(_pausePlaybackOnLessonChange());
+    }
+  }
+
+  String _defaultLessonAccordionPanelId() => _lessonPanelDescription;
+
+  String? _effectiveOpenLessonPanelId() {
+    if (!_lessonAccordionUserInteracted) {
+      return _defaultLessonAccordionPanelId();
+    }
+    return _openLessonPanel;
+  }
+
+  /// Which accordion section owns the top "player" slot. `null` => primary video (or audio lesson).
+  String? _activeHeroPanel() {
+    if (!_lessonAccordionUserInteracted) return null;
+    return _openLessonPanel;
+  }
+
+  void _pauseMainVideoPlayback() {
+    final c = _controller;
+    if (c == null) return;
+    try {
+      if (c.isVideoPlaying == true) {
+        c.pause();
+      }
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pauseLessonAudioPlayback() async {
+    try {
+      await _audioPlayer?.pause();
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pausePlaybackOnLessonChange() async {
+    final c = _controller;
+    if (c != null) {
+      try {
+        if (c.isFullScreen == true) {
+          await _exitVideoFullscreen();
+        }
+      } catch (_) {}
+    }
+    _pauseMainVideoPlayback();
+    await _pauseLessonAudioPlayback();
+  }
+
+  void _pauseVideoBecauseAudioStarted() {
+    if (_silencingOtherPlayback) return;
+    final c = _controller;
+    if (c == null) return;
+    _silencingOtherPlayback = true;
+    try {
+      if (c.isVideoPlaying == true) {
+        c.pause();
+      }
+    } catch (_) {}
+    _silencingOtherPlayback = false;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pauseAudioBecauseVideoStarted() async {
+    if (_silencingOtherPlayback) return;
+    if (_audioPlayer == null) return;
+    _silencingOtherPlayback = true;
+    try {
+      await _audioPlayer!.pause();
+    } catch (_) {}
+    _silencingOtherPlayback = false;
+    if (mounted) setState(() {});
+  }
+
+  void _toggleLessonPanel(String id) {
+    final before = _effectiveOpenLessonPanelId();
+    setState(() {
+      _lessonAccordionUserInteracted = true;
+      if (before == id) {
+        _openLessonPanel = null;
+      } else {
+        _openLessonPanel = id;
+      }
+      if (_openLessonPanel != _lessonPanelPdfs) {
+        _activePdfUrl = null;
+      }
+    });
+    final after = _effectiveOpenLessonPanelId();
+    final afterOpen = _openLessonPanel;
+    if (before == after) return;
+    if (before == _lessonPanelAudio && after != _lessonPanelAudio) {
+      unawaited(_pauseLessonAudioPlayback());
+    }
+    if (afterOpen == _lessonPanelAudio) {
+      _pauseMainVideoPlayback();
+    } else if (afterOpen != null && afterOpen != _lessonPanelVideos) {
+      _pauseMainVideoPlayback();
+    }
+    if (afterOpen != _lessonPanelAudio) {
+      unawaited(_pauseLessonAudioPlayback());
+    }
+  }
+
+  bool _isLessonPanelOpen(String id) {
+    if (!_lessonAccordionUserInteracted) {
+      return id == _defaultLessonAccordionPanelId();
+    }
+    return _openLessonPanel == id;
+  }
+
+  Widget _lessonAccordionCard({
+    required String panelId,
+    required String title,
+    required IconData icon,
+    required Color accent,
+    int? badge,
+    required Widget child,
+  }) {
+    final open = _isLessonPanelOpen(panelId);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 20,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _toggleLessonPanel(panelId),
+                borderRadius: BorderRadius.vertical(
+                  top: const Radius.circular(20),
+                  bottom: Radius.circular(open ? 0 : 20),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: accent.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(icon, color: accent, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: GoogleFonts.cairo(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.foreground,
+                          ),
+                        ),
+                      ),
+                      if (badge != null && badge > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: accent.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '$badge',
+                            style: GoogleFonts.cairo(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: accent,
+                            ),
+                          ),
+                        ),
+                      Icon(
+                        open
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (open)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: child,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _shouldShowLessonAudioPanel() {
+    if (_allAudioUrls.isEmpty) return false;
+    if (_isAudioLesson && _allAudioUrls.length <= 1) return false;
+    return true;
   }
 
   bool _looksLikeHtml(String? text) {
@@ -173,10 +412,16 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       {bool clearWebViewFallback = false}) async {
     if (!mounted || _controller == null) return;
     final c = _controller!;
+    _podWasPlaying = c.isVideoPlaying == true;
     c.addListener(() {
       if (_didVideoReachEnd(c)) {
         _markLessonComplete();
       }
+      final playing = c.isVideoPlaying == true;
+      if (playing && _podWasPlaying != true) {
+        unawaited(_pauseAudioBecauseVideoStarted());
+      }
+      _podWasPlaying = playing;
     });
     if (mounted) {
       setState(() {
@@ -254,8 +499,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         videoIndex: s.videoIndex,
         audioIndex: s.audioIndex,
         watchedSeconds: s.watchedSeconds,
-        markLessonCompletedId:
-            s.lessonMarkedComplete ? s.lessonId : null,
+        markLessonCompletedId: s.lessonMarkedComplete ? s.lessonId : null,
       );
     } catch (_) {}
 
@@ -411,8 +655,99 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     return urls.toList();
   }
 
-  Widget _buildImagesSection(List<String> imageUrls) {
+  Widget _buildImagesSection(List<String> imageUrls,
+      {bool forAccordion = false}) {
     if (imageUrls.isEmpty) return const SizedBox.shrink();
+
+    final gallery = SizedBox(
+      height: 86,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemBuilder: (context, index) {
+          final url = imageUrls[index];
+          return GestureDetector(
+            onTap: () {
+              showDialog<void>(
+                context: context,
+                builder: (context) => Dialog(
+                  insetPadding: const EdgeInsets.all(16),
+                  child: Container(
+                    color: Colors.black,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: InteractiveViewer(
+                            child: Image.network(
+                              url,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24.0),
+                                  child: Text(
+                                    'تعذر تحميل الصورة',
+                                    style: GoogleFonts.cairo(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded,
+                                color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                width: 86,
+                height: 86,
+                child: Image.network(
+                  url,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    color: Colors.grey[200],
+                    child: const Icon(Icons.broken_image_rounded,
+                        color: AppColors.mutedForeground, size: 22),
+                  ),
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      color: Colors.grey[100],
+                      child: const Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemCount: imageUrls.length,
+      ),
+    );
+
+    if (forAccordion) return gallery;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -453,94 +788,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             ],
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            height: 86,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemBuilder: (context, index) {
-                final url = imageUrls[index];
-                return GestureDetector(
-                  onTap: () {
-                    showDialog<void>(
-                      context: context,
-                      builder: (context) => Dialog(
-                        insetPadding: const EdgeInsets.all(16),
-                        child: Container(
-                          color: Colors.black,
-                          child: Stack(
-                            children: [
-                              Positioned.fill(
-                                child: InteractiveViewer(
-                                  child: Image.network(
-                                    url,
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (_, __, ___) => Center(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(24.0),
-                                        child: Text(
-                                          'تعذر تحميل الصورة',
-                                          style: GoogleFonts.cairo(
-                                            color: Colors.white,
-                                            fontSize: 14,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: IconButton(
-                                  onPressed: () => Navigator.of(context).pop(),
-                                  icon: const Icon(Icons.close_rounded,
-                                      color: Colors.white),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: SizedBox(
-                      width: 86,
-                      height: 86,
-                      child: Image.network(
-                        url,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey[200],
-                          child: const Icon(Icons.broken_image_rounded,
-                              color: AppColors.mutedForeground, size: 22),
-                        ),
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return Container(
-                            color: Colors.grey[100],
-                            child: const Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                );
-              },
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemCount: imageUrls.length,
-            ),
-          ),
+          gallery,
         ],
       ),
     );
@@ -843,6 +1091,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (index == _currentVideoIndex) return;
 
     _consumedVideoResumeSeek = true;
+    await _pauseLessonAudioPlayback();
 
     final previousController = _controller;
 
@@ -899,6 +1148,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       _vimeoId = null;
       _initializeDirectVideo(videoUrl);
     }
+
+    if (mounted) {
+      setState(() {
+        _lessonAccordionUserInteracted = true;
+        _openLessonPanel = _lessonPanelVideos;
+        _activePdfUrl = null;
+      });
+    }
   }
 
   bool _hasAnyVideoSource() {
@@ -944,10 +1201,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         setState(() => _audioPosition = p);
       }
     });
+    var audioWasPlaying = false;
     _audioPlayer!.playingStream.listen((playing) {
-      if (mounted) {
-        setState(() => _isAudioPlaying = playing);
+      if (!mounted) return;
+      if (playing && !audioWasPlaying) {
+        _pauseVideoBecauseAudioStarted();
       }
+      audioWasPlaying = playing;
+      setState(() => _isAudioPlaying = playing);
     });
   }
 
@@ -974,6 +1235,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
   Future<void> _switchAudioTrack(int index) async {
     if (index < 0 || index >= _allAudioUrls.length) return;
+    if (mounted) {
+      setState(() {
+        _lessonAccordionUserInteracted = true;
+        _openLessonPanel = _lessonPanelAudio;
+        _activePdfUrl = null;
+      });
+    }
     if (index == _currentAudioIndex) {
       if (_isAudioPlaying) {
         await _audioPlayer?.pause();
@@ -1807,10 +2075,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         top: false,
         child: Column(
           children: [
-            // Video Player Section
             _buildVideoSection(lesson),
-
-            // Lesson Info Section
             Expanded(
               child: _buildLessonInfo(lesson),
             ),
@@ -1820,7 +2085,254 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     );
   }
 
+  Widget _buildHeroTopBar(
+    Map<String, dynamic> lesson, {
+    List<Widget> trailing = const [],
+  }) {
+    return Container(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + 8,
+        left: 16,
+        right: 16,
+        bottom: 8,
+      ),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => context.pop(),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              lesson['title'] as String? ??
+                  AppLocalizations.of(context)!.lesson,
+              style: GoogleFonts.cairo(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          ...trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLessonDescriptionHeroBody() {
+    if (_isLoadingContent) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.purple),
+      );
+    }
+    final description = _lessonContent?['content'] as String? ?? '';
+
+    if (description.trim().isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            AppLocalizations.of(context)!.noLessonDescription,
+            style: GoogleFonts.cairo(
+              fontSize: 14,
+              color: AppColors.mutedForeground,
+              height: 1.7,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    if (_looksLikeHtml(description) && _descriptionWebViewController != null) {
+      return WebViewWidget(controller: _descriptionWebViewController!);
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Text(
+        description,
+        style: GoogleFonts.cairo(
+          fontSize: 14,
+          color: AppColors.foreground,
+          height: 1.7,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLessonDescriptionAccordionContent() {
+    if (_activeHeroPanel() == _lessonPanelDescription) {
+      if (_isLoadingContent) {
+        return const Center(
+          child: Padding(
+            padding: EdgeInsets.all(20.0),
+            child: CircularProgressIndicator(
+              color: AppColors.purple,
+            ),
+          ),
+        );
+      }
+      final description = _lessonContent?['content'] as String? ?? '';
+      if (description.trim().isEmpty) {
+        return Text(
+          AppLocalizations.of(context)!.noLessonDescription,
+          style: GoogleFonts.cairo(
+            fontSize: 14,
+            color: AppColors.mutedForeground,
+            height: 1.7,
+          ),
+        );
+      }
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'يُعرض الوصف في أعلى الشاشة.',
+          style: GoogleFonts.cairo(
+            fontSize: 13,
+            color: AppColors.mutedForeground,
+            height: 1.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return _buildLessonDescriptionBody();
+  }
+
+  Widget _buildHeroDescription(Map<String, dynamic> lesson) {
+    final desc = _lessonContent?['content'] as String? ?? '';
+    if (desc.isNotEmpty && _looksLikeHtml(desc)) {
+      _ensureDescriptionWebViewLoaded(desc);
+    }
+    return Container(
+      color: Colors.black,
+      child: Column(
+        children: [
+          _buildHeroTopBar(lesson),
+          SizedBox(
+            height: 220,
+            child: Container(
+              color: const Color(0xFFF8F9FC),
+              child: _buildLessonDescriptionHeroBody(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroImages(Map<String, dynamic> lesson, List<String> imageUrls) {
+    return Container(
+      color: Colors.black,
+      child: Column(
+        children: [
+          _buildHeroTopBar(lesson),
+          SizedBox(
+            height: 220,
+            child: Container(
+              color: const Color(0xFFF8F9FC),
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: _buildImagesSection(imageUrls, forAccordion: true),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroDownload(Map<String, dynamic> lesson) {
+    return Container(
+      color: Colors.black,
+      child: Column(
+        children: [
+          _buildHeroTopBar(lesson),
+          SizedBox(
+            height: 220,
+            child: Container(
+              color: const Color(0xFFF8F9FC),
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: SingleChildScrollView(
+                  child: _buildDownloadSectionBody(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroFiles(Map<String, dynamic> lesson) {
+    return Container(
+      color: Colors.black,
+      child: Column(
+        children: [
+          _buildHeroTopBar(lesson),
+          SizedBox(
+            height: 220,
+            child: Container(
+              color: const Color(0xFFF8F9FC),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: _isLoadingContent
+                  ? const Center(
+                      child: CircularProgressIndicator(color: AppColors.purple),
+                    )
+                  : Scrollbar(
+                      child: SingleChildScrollView(
+                        child: _buildResourcesList(),
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildVideoSection(Map<String, dynamic> lesson) {
+    final heroPanel = _activeHeroPanel();
+    final imageUrls = _collectLessonImageUrls();
+    final pdfUrls = _collectAllPdfUrls();
+
+    if (heroPanel == _lessonPanelDescription) {
+      return _buildHeroDescription(lesson);
+    }
+    if (heroPanel == _lessonPanelImages && imageUrls.isNotEmpty) {
+      return _buildHeroImages(lesson, imageUrls);
+    }
+    if (heroPanel == _lessonPanelAudio && _allAudioUrls.isNotEmpty) {
+      return _buildAudioPlayer();
+    }
+    if (heroPanel == _lessonPanelPdfs && pdfUrls.isNotEmpty) {
+      final selectedPdf =
+          (pdfUrls.contains(_activePdfUrl)) ? _activePdfUrl! : pdfUrls.first;
+      return _buildInlinePdfViewer(lesson, selectedPdf);
+    }
+    if (heroPanel == _lessonPanelDownload) {
+      return _buildHeroDownload(lesson);
+    }
+    if (heroPanel == _lessonPanelFiles) {
+      return _buildHeroFiles(lesson);
+    }
+
     if (_isAudioLesson) return _buildAudioPlayer();
 
     if (_isVimeoVideo && _vimeoId != null) {
@@ -1845,7 +2357,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       color: Colors.black,
       child: Column(
         children: [
-          // Header
           Container(
             padding: EdgeInsets.only(
               top: MediaQuery.of(context).padding.top + 8,
@@ -1932,8 +2443,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               ],
             ),
           ),
-
-          // Video Player
           SizedBox(
             height: 220,
             child: Stack(
@@ -1990,6 +2499,55 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                                   ),
                 if (_controller == null)
                   IgnorePointer(child: _buildVideoWatermarkOverlay()),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInlinePdfViewer(Map<String, dynamic> lesson, String pdfUrl) {
+    if (_activePdfUrl != pdfUrl || _pdfWebViewController == null) {
+      _activePdfUrl = pdfUrl;
+      _isPdfLoading = true;
+      _pdfWebViewController = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(Colors.black)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) {
+              if (!mounted) return;
+              setState(() => _isPdfLoading = false);
+            },
+            onWebResourceError: (_) {
+              if (!mounted) return;
+              setState(() => _isPdfLoading = false);
+            },
+          ),
+        )
+        ..loadRequest(Uri.parse(pdfUrl));
+    }
+
+    return Container(
+      color: Colors.black,
+      child: Column(
+        children: [
+          _buildHeroTopBar(lesson),
+          SizedBox(
+            height: 220,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (_pdfWebViewController != null)
+                  WebViewWidget(controller: _pdfWebViewController!),
+                if (_isPdfLoading)
+                  Container(
+                    color: Colors.black,
+                    child: const Center(
+                      child: CircularProgressIndicator(color: AppColors.purple),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -2060,7 +2618,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         Positioned.fill(
           child: IgnorePointer(
             child: AnimatedOpacity(
-              opacity: options.podVideoState == PodVideoState.paused ? 1.0 : 0.0,
+              opacity:
+                  options.podVideoState == PodVideoState.paused ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOut,
               child: Center(
@@ -2364,7 +2923,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     );
   }
 
-  Widget _buildAudioFilesSection() {
+  Widget _buildAudioFilesSection({bool forAccordion = false}) {
     if (_allAudioUrls.isEmpty) return const SizedBox.shrink();
     if (_isAudioLesson && _allAudioUrls.length <= 1) {
       return const SizedBox.shrink();
@@ -2377,6 +2936,25 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
       return '$m:$s';
     }
+
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showControls && _audioPlayer != null) ...[
+          _buildInlineAudioControls(formatDur),
+          const SizedBox(height: 12),
+        ],
+        ...List.generate(_allAudioUrls.length, (index) {
+          final url = _allAudioUrls[index];
+          final isPlaying = index == _currentAudioIndex && _isAudioPlaying;
+          final isCurrent = index == _currentAudioIndex;
+          return _buildAudioTrackItem(
+              index, url, isCurrent, isPlaying, formatDur);
+        }),
+      ],
+    );
+
+    if (forAccordion) return body;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -2434,17 +3012,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             ],
           ),
           const SizedBox(height: 14),
-          if (showControls && _audioPlayer != null) ...[
-            _buildInlineAudioControls(formatDur),
-            const SizedBox(height: 12),
-          ],
-          ...List.generate(_allAudioUrls.length, (index) {
-            final url = _allAudioUrls[index];
-            final isPlaying = index == _currentAudioIndex && _isAudioPlaying;
-            final isCurrent = index == _currentAudioIndex;
-            return _buildAudioTrackItem(
-                index, url, isCurrent, isPlaying, formatDur);
-          }),
+          body,
         ],
       ),
     );
@@ -2564,8 +3132,40 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     );
   }
 
-  Widget _buildVideoFilesSection() {
+  Widget _buildVideoFilesSection({bool forAccordion = false}) {
+    if (_allVideoUrls.isEmpty) {
+      if (!forAccordion) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'اضغط لعرض الفيديو في أعلى الشاشة.',
+          style: GoogleFonts.cairo(
+            fontSize: 13,
+            color: AppColors.mutedForeground,
+            height: 1.5,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    if (_allVideoUrls.length == 1 && forAccordion) {
+      return _buildVideoTrackItem(0, _allVideoUrls.first, true);
+    }
     if (_allVideoUrls.length <= 1) return const SizedBox.shrink();
+
+    final tracks = List.generate(_allVideoUrls.length, (index) {
+      final url = _allVideoUrls[index];
+      final isCurrent = index == _currentVideoIndex;
+      return _buildVideoTrackItem(index, url, isCurrent);
+    });
+
+    if (forAccordion) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: tracks,
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -2623,11 +3223,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             ],
           ),
           const SizedBox(height: 14),
-          ...List.generate(_allVideoUrls.length, (index) {
-            final url = _allVideoUrls[index];
-            final isCurrent = index == _currentVideoIndex;
-            return _buildVideoTrackItem(index, url, isCurrent);
-          }),
+          ...tracks,
         ],
       ),
     );
@@ -2710,9 +3306,20 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     );
   }
 
-  Widget _buildPdfFilesSection() {
+  Widget _buildPdfFilesSection({bool forAccordion = false}) {
     final pdfUrls = _collectAllPdfUrls();
     if (pdfUrls.isEmpty) return const SizedBox.shrink();
+
+    final items = List.generate(pdfUrls.length, (index) {
+      return _buildPdfItem(index, pdfUrls[index]);
+    });
+
+    if (forAccordion) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: items,
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -2770,9 +3377,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             ],
           ),
           const SizedBox(height: 14),
-          ...List.generate(pdfUrls.length, (index) {
-            return _buildPdfItem(index, pdfUrls[index]);
-          }),
+          ...items,
         ],
       ),
     );
@@ -2780,22 +3385,30 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
   Widget _buildPdfItem(int index, String url) {
     final name = _fileNameFromUrl(url);
+    final isActive =
+        _activePdfUrl == url && _activeHeroPanel() == _lessonPanelPdfs;
     return GestureDetector(
       onTap: () {
-        context.push(
-          RouteNames.pdfViewer,
-          extra: {
-            'pdfUrl': url,
-            'title': name,
-          },
-        );
+        _pauseMainVideoPlayback();
+        unawaited(_pauseLessonAudioPlayback());
+        setState(() {
+          _lessonAccordionUserInteracted = true;
+          _openLessonPanel = _lessonPanelPdfs;
+          _activePdfUrl = url;
+          _isPdfLoading = true;
+        });
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F9FC),
+          color: isActive
+              ? Colors.orange.withOpacity(0.08)
+              : const Color(0xFFF8F9FC),
           borderRadius: BorderRadius.circular(14),
+          border: isActive
+              ? Border.all(color: Colors.orange.withOpacity(0.3))
+              : null,
         ),
         child: Row(
           children: [
@@ -2838,12 +3451,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: AppColors.purple.withOpacity(0.1),
+                color: isActive
+                    ? Colors.orange.withOpacity(0.14)
+                    : AppColors.purple.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(
-                Icons.preview_rounded,
-                color: AppColors.purple,
+              child: Icon(
+                isActive ? Icons.check_rounded : Icons.preview_rounded,
+                color: isActive ? Colors.orange : AppColors.purple,
                 size: 18,
               ),
             ),
@@ -2853,7 +3468,132 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     );
   }
 
+  Widget _buildLessonDescriptionBody() {
+    if (_isLoadingContent) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20.0),
+          child: CircularProgressIndicator(
+            color: AppColors.purple,
+          ),
+        ),
+      );
+    }
+    return Builder(
+      builder: (context) {
+        final description = _lessonContent?['content'] as String? ?? '';
+
+        if (description.trim().isEmpty) {
+          return Text(
+            AppLocalizations.of(context)!.noLessonDescription,
+            style: GoogleFonts.cairo(
+              fontSize: 14,
+              color: AppColors.mutedForeground,
+              height: 1.7,
+            ),
+          );
+        }
+
+        if (_looksLikeHtml(description) &&
+            _descriptionWebViewController != null) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              height: 260,
+              child: WebViewWidget(
+                controller: _descriptionWebViewController!,
+              ),
+            ),
+          );
+        }
+
+        return Text(
+          description,
+          style: GoogleFonts.cairo(
+            fontSize: 14,
+            color: AppColors.mutedForeground,
+            height: 1.7,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDownloadSectionBody() {
+    if (_isDownloading) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LinearProgressIndicator(
+            value: _downloadProgress / 100,
+            backgroundColor: Colors.grey[200],
+            valueColor: AlwaysStoppedAnimation<Color>(
+              AppColors.purple,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppLocalizations.of(context)!.downloadingProgress(
+              _downloadProgress.round(),
+            ),
+            style: GoogleFonts.cairo(
+              fontSize: 14,
+              color: AppColors.mutedForeground,
+            ),
+          ),
+        ],
+      );
+    }
+    if (_isDownloaded) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.green[50],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green[600], size: 20),
+            const SizedBox(width: 8),
+            Text(
+              AppLocalizations.of(context)!.videoDownloaded,
+              style: GoogleFonts.cairo(
+                fontSize: 14,
+                color: Colors.green[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return ElevatedButton.icon(
+      onPressed: _handleDownload,
+      icon: const Icon(Icons.download, color: Colors.white),
+      label: Text(
+        AppLocalizations.of(context)!.downloadForOffline,
+        style: GoogleFonts.cairo(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.purple,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: 12,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
   Widget _buildLessonInfo(Map<String, dynamic> lesson) {
+    final imageUrls = _collectLessonImageUrls();
+    final pdfUrls = _collectAllPdfUrls();
+
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFFF8F9FC),
@@ -2903,285 +3643,112 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             ),
             const SizedBox(height: 24),
 
-            // Description Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 20,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.purple.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.description_rounded,
-                            color: AppColors.purple, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        AppLocalizations.of(context)!.lessonDescriptionTitle,
-                        style: GoogleFonts.cairo(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.foreground,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _isLoadingContent
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(20.0),
-                            child: CircularProgressIndicator(
-                              color: AppColors.purple,
-                            ),
-                          ),
-                        )
-                      : Builder(
-                          builder: (context) {
-                            final description =
-                                _lessonContent?['content'] as String? ?? '';
-
-                            if (description.trim().isEmpty) {
-                              return Text(
-                                AppLocalizations.of(context)!
-                                    .noLessonDescription,
-                                style: GoogleFonts.cairo(
-                                  fontSize: 14,
-                                  color: AppColors.mutedForeground,
-                                  height: 1.7,
-                                ),
-                              );
-                            }
-
-                            if (_looksLikeHtml(description) &&
-                                _descriptionWebViewController != null) {
-                              return ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: SizedBox(
-                                  height: 260,
-                                  child: WebViewWidget(
-                                    controller: _descriptionWebViewController!,
-                                  ),
-                                ),
-                              );
-                            }
-
-                            return Text(
-                              description,
-                              style: GoogleFonts.cairo(
-                                fontSize: 14,
-                                color: AppColors.mutedForeground,
-                                height: 1.7,
-                              ),
-                            );
-                          },
-                        ),
-                ],
-              ),
+            _lessonAccordionCard(
+              panelId: _lessonPanelDescription,
+              title: AppLocalizations.of(context)!.lessonDescriptionTitle,
+              icon: Icons.description_rounded,
+              accent: AppColors.purple,
+              child: _buildLessonDescriptionAccordionContent(),
             ),
-            const SizedBox(height: 20),
-
-            // Images Section (from course response lesson.images / lesson.media)
-            _buildImagesSection(_collectLessonImageUrls()),
-            if (_collectLessonImageUrls().isNotEmpty)
-              const SizedBox(height: 20),
-
-            // Audio Files Section
-            _buildAudioFilesSection(),
-            if (_allAudioUrls.isNotEmpty &&
-                !(_isAudioLesson && _allAudioUrls.length <= 1))
-              const SizedBox(height: 20),
-
-            // Video Files Section
-            _buildVideoFilesSection(),
-            if (_allVideoUrls.length > 1) const SizedBox(height: 20),
-
-            // PDF Files Section
-            _buildPdfFilesSection(),
-            if (_collectAllPdfUrls().isNotEmpty) const SizedBox(height: 20),
-
-            // Download Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 20,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.purple.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.download_rounded,
-                            color: AppColors.purple, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        AppLocalizations.of(context)!.downloadForOffline,
-                        style: GoogleFonts.cairo(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.foreground,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  if (_isDownloading)
-                    Column(
-                      children: [
-                        LinearProgressIndicator(
-                          value: _downloadProgress / 100,
-                          backgroundColor: Colors.grey[200],
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            AppColors.purple,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          AppLocalizations.of(context)!.downloadingProgress(
-                            _downloadProgress.round(),
-                          ),
+            if (imageUrls.isNotEmpty)
+              _lessonAccordionCard(
+                panelId: _lessonPanelImages,
+                title: 'صور الدرس',
+                icon: Icons.image_rounded,
+                accent: Colors.blue,
+                badge: imageUrls.length,
+                child: _activeHeroPanel() == _lessonPanelImages
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          'يُعرض معرض الصور في أعلى الشاشة.',
                           style: GoogleFonts.cairo(
-                            fontSize: 14,
+                            fontSize: 13,
                             color: AppColors.mutedForeground,
+                            height: 1.5,
                           ),
+                          textAlign: TextAlign.center,
                         ),
-                      ],
-                    )
-                  else if (_isDownloaded)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.green[50],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.check_circle,
-                              color: Colors.green[600], size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            AppLocalizations.of(context)!.videoDownloaded,
-                            style: GoogleFonts.cairo(
-                              fontSize: 14,
-                              color: Colors.green[700],
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    ElevatedButton.icon(
-                      onPressed: _handleDownload,
-                      icon: const Icon(Icons.download, color: Colors.white),
-                      label: Text(
-                        AppLocalizations.of(context)!.downloadForOffline,
-                        style: GoogleFonts.cairo(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.purple,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                ],
+                      )
+                    : _buildImagesSection(imageUrls, forAccordion: true),
               ),
+            if (_shouldShowLessonAudioPanel())
+              _lessonAccordionCard(
+                panelId: _lessonPanelAudio,
+                title: 'ملفات صوتية',
+                icon: Icons.headphones_rounded,
+                accent: Colors.deepPurple,
+                badge: _allAudioUrls.length,
+                child: _buildAudioFilesSection(forAccordion: true),
+              ),
+            if (_hasAnyVideoSource() || _allVideoUrls.isNotEmpty)
+              _lessonAccordionCard(
+                panelId: _lessonPanelVideos,
+                title: 'ملفات الفيديو',
+                icon: Icons.video_library_rounded,
+                accent: Colors.red,
+                badge: _allVideoUrls.isNotEmpty ? _allVideoUrls.length : null,
+                child: _buildVideoFilesSection(forAccordion: true),
+              ),
+            if (pdfUrls.isNotEmpty)
+              _lessonAccordionCard(
+                panelId: _lessonPanelPdfs,
+                title: 'ملفات PDF',
+                icon: Icons.picture_as_pdf_rounded,
+                accent: Colors.orange,
+                badge: pdfUrls.length,
+                child: _buildPdfFilesSection(forAccordion: true),
+              ),
+            _lessonAccordionCard(
+              panelId: _lessonPanelDownload,
+              title: AppLocalizations.of(context)!.downloadForOffline,
+              icon: Icons.download_rounded,
+              accent: AppColors.purple,
+              child: _activeHeroPanel() == _lessonPanelDownload
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'يُعرض التحميل للمشاهدة دون اتصال في أعلى الشاشة.',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          color: AppColors.mutedForeground,
+                          height: 1.5,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : _buildDownloadSectionBody(),
             ),
-            const SizedBox(height: 20),
-
-            // Resources Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 20,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.folder_rounded,
-                            color: Colors.orange, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        AppLocalizations.of(context)!.lessonFiles,
-                        style: GoogleFonts.cairo(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.foreground,
+            _lessonAccordionCard(
+              panelId: _lessonPanelFiles,
+              title: AppLocalizations.of(context)!.lessonFiles,
+              icon: Icons.folder_rounded,
+              accent: Colors.orange,
+              child: _isLoadingContent
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20.0),
+                        child: CircularProgressIndicator(
+                          color: AppColors.purple,
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _isLoadingContent
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(20.0),
-                            child: CircularProgressIndicator(
-                              color: AppColors.purple,
+                    )
+                  : _activeHeroPanel() == _lessonPanelFiles
+                      ? Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'يُعرض ملفات الدرس في أعلى الشاشة.',
+                            style: GoogleFonts.cairo(
+                              fontSize: 13,
+                              color: AppColors.mutedForeground,
+                              height: 1.5,
                             ),
+                            textAlign: TextAlign.center,
                           ),
                         )
                       : _buildResourcesList(),
-                ],
-              ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 4),
 
             // Navigation Buttons
             Row(

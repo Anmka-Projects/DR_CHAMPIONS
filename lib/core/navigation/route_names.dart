@@ -48,4 +48,7 @@ class RouteNames {
   static const String teacherDetails = '/teacher-details';
   static const String chatConversations = '/chat';
   static const String chatMessages = '/chat/:conversationId';
+
+  /// Debug: lesson viewer with a sample Vimeo embed (`VimeoTestScreen`).
+  static const String vimeoTest = '/debug/vimeo-test';
 }

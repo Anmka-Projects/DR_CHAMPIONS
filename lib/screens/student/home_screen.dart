@@ -1677,80 +1677,64 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Color _parseColor(dynamic colorValue) {
-    if (colorValue == null) return const Color(0xFF0C52B3);
-    if (colorValue is Color) return colorValue;
-    if (colorValue is String) {
-      // Handle hex color strings like "#7C3AED" or "7C3AED"
-      String hex = colorValue.replaceAll('#', '');
-      if (hex.length == 6) {
-        return Color(int.parse('FF$hex', radix: 16));
-      }
-    }
-    return const Color(0xFF0C52B3);
-  }
+  Widget _getCategoryIcon(dynamic iconValue) {
+    const iconColor = AppColors.primary;
+    const iconSize = 24.0;
 
-  Widget _getCategoryIcon(dynamic iconValue, Color color) {
     if (iconValue == null) {
-      return Icon(Icons.category, color: color, size: 26);
+      return Icon(Icons.category_rounded, color: iconColor, size: iconSize);
     }
 
-    // If it's already an IconData, use it directly
     if (iconValue is IconData) {
-      return Icon(iconValue, color: color, size: 26);
+      return Icon(iconValue, color: iconColor, size: iconSize);
     }
 
-    // If it's a string, map it to an IconData
     if (iconValue is String) {
       final iconMap = {
-        'design_services': Icons.design_services,
-        'code': Icons.code,
-        'trending_up': Icons.trending_up,
-        'analytics': Icons.analytics,
-        'school': Icons.school,
-        'computer': Icons.computer,
-        'business': Icons.business,
-        'science': Icons.science,
-        'palette': Icons.palette,
-        'language': Icons.language,
-        'music_note': Icons.music_note,
-        'fitness_center': Icons.fitness_center,
-        'restaurant': Icons.restaurant,
-        'local_movies': Icons.local_movies,
-        'photo_camera': Icons.photo_camera,
-        'briefcase': Icons.business_center,
-        'book': Icons.menu_book,
-        'calculate': Icons.calculate,
-        'bolt': Icons.bolt,
+        'design_services': Icons.design_services_rounded,
+        'code': Icons.code_rounded,
+        'trending_up': Icons.trending_up_rounded,
+        'analytics': Icons.analytics_rounded,
+        'school': Icons.school_rounded,
+        'computer': Icons.computer_rounded,
+        'business': Icons.business_rounded,
+        'science': Icons.science_rounded,
+        'palette': Icons.palette_rounded,
+        'language': Icons.language_rounded,
+        'music_note': Icons.music_note_rounded,
+        'fitness_center': Icons.fitness_center_rounded,
+        'restaurant': Icons.restaurant_rounded,
+        'local_movies': Icons.local_movies_rounded,
+        'photo_camera': Icons.photo_camera_rounded,
+        'briefcase': Icons.business_center_rounded,
+        'book': Icons.menu_book_rounded,
+        'calculate': Icons.calculate_rounded,
+        'bolt': Icons.bolt_rounded,
       };
 
-      // Try to find the icon by name (case-insensitive)
       final iconName = iconValue.toLowerCase().replaceAll(' ', '_');
       final iconData = iconMap[iconName];
 
       if (iconData != null) {
-        return Icon(iconData, color: color, size: 26);
+        return Icon(iconData, color: iconColor, size: iconSize);
       }
 
-      // If icon is a URL, try to load the image, fallback to default icon on error
       if (iconValue.startsWith('http://') ||
           iconValue.startsWith('https://') ||
           iconValue.startsWith('/')) {
         return Image.network(
           iconValue,
-          width: 26,
-          height: 26,
+          width: iconSize,
+          height: iconSize,
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
-            // Return default icon on error, not an image
-            return Icon(Icons.category, color: color, size: 26);
+            return Icon(Icons.category_rounded, color: iconColor, size: iconSize);
           },
         );
       }
     }
 
-    // Default fallback
-    return Icon(Icons.category, color: color, size: 26);
+    return Icon(Icons.category_rounded, color: iconColor, size: iconSize);
   }
 
   Widget _buildCategories() {
@@ -1758,75 +1742,109 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return const SizedBox.shrink();
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        children: _categories.take(4).map((cat) {
-          final categoryColor = _parseColor(cat['color']);
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(
-                  left: cat == _categories.take(4).last ? 0 : 10),
-              child: GestureDetector(
-                onTap: () => context.push(RouteNames.categories),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: categoryColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: _getCategoryIcon(cat['icon'], categoryColor),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        cat['name'] ?? cat['label'] ?? '',
-                        textAlign: TextAlign.center,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.cairo(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.foreground,
-                        ),
-                      ),
-                      Text(
-                        () {
-                          final raw = cat['courses_count'] ?? cat['count'] ?? 0;
-                          final count = raw is int
-                              ? raw
-                              : raw is num
-                                  ? raw.toInt()
-                                  : int.tryParse(raw.toString()) ?? 0;
-                          return AppLocalizations.of(context)!
-                              .coursesCount(count);
-                        }(),
-                        style: GoogleFonts.cairo(
-                          fontSize: 10,
-                          color: AppColors.mutedForeground,
-                        ),
-                      ),
-                    ],
-                  ),
+    final l10n = AppLocalizations.of(context)!;
+
+    return SizedBox(
+      height: 124,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        physics: const BouncingScrollPhysics(),
+        itemCount: _categories.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final cat = _categories[index];
+          final id = cat['id']?.toString() ?? '';
+          final name = (cat['name_ar'] ?? cat['name'] ?? cat['label'] ?? '')
+              .toString();
+          final raw = cat['courses_count'] ?? cat['count'] ?? 0;
+          final count = raw is int
+              ? raw
+              : raw is num
+                  ? raw.toInt()
+                  : int.tryParse(raw.toString()) ?? 0;
+
+          return GestureDetector(
+            onTap: () {
+              if (id.isNotEmpty) {
+                context.push(RouteNames.allCourses, extra: {
+                  'categoryId': id,
+                  'categoryName': name,
+                });
+              } else {
+                context.push(RouteNames.categories);
+              }
+            },
+            child: Container(
+              width: 108,
+              padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.12),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: 0.06),
+                    blurRadius: 14,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          AppColors.lavenderLight,
+                          AppColors.primary.withValues(alpha: 0.08),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.18),
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: _getCategoryIcon(cat['icon']),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Text(
+                      name,
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.cairo(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.foreground,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    l10n.coursesCount(count),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cairo(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
               ),
             ),
           );
-        }).toList(),
+        },
       ),
     );
   }
@@ -2171,53 +2189,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildCategoriesSkeleton() {
     return Skeletonizer(
       enabled: true,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Row(
-          children: List.generate(4, (index) {
-            return Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(left: index == 0 ? 0 : 10),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        height: 124,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 5,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (_, __) {
+            return Container(
+              width: 108,
+              padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      const SizedBox(height: 10),
-                      Container(
-                        height: 12,
-                        width: 50,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        height: 10,
-                        width: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  Container(
+                    height: 8,
+                    width: 56,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ],
               ),
             );
-          }),
+          },
         ),
       ),
     );

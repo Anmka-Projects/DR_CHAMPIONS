@@ -1240,7 +1240,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         for (int i = 0; i < sections.length; i++) {
           final section = sections[i];
           final sectionKey = (section['id'] ?? 'section_$i').toString();
-          _expandedModules.putIfAbsent(sectionKey, () => true);
+          _expandedModules.putIfAbsent(sectionKey, () => i == 0);
 
           modulesList.add({
             'type': 'module',
@@ -1317,7 +1317,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
             }
 
             final moduleKey = (item['id'] ?? 'module_$i').toString();
-            _expandedModules.putIfAbsent(moduleKey, () => true);
+            _expandedModules.putIfAbsent(moduleKey, () => i == 0);
 
             modulesList.add({
               'type': 'module',
@@ -1377,7 +1377,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
 
             if (isTopic) {
               final moduleKey = (item['id'] ?? 'module_$i').toString();
-              _expandedModules.putIfAbsent(moduleKey, () => true);
+              _expandedModules.putIfAbsent(moduleKey, () => i == 0);
               modulesList.add({
                 'type': 'module',
                 'data': item,
@@ -1428,7 +1428,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       }
 
       final moduleKey = item['module_key']?.toString();
-      if (moduleKey == null || (_expandedModules[moduleKey] ?? true)) {
+      if (moduleKey == null || (_expandedModules[moduleKey] ?? false)) {
         visibleItems.add(item);
       }
     }
@@ -1444,7 +1444,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
 
         if (type == 'module') {
           final moduleKey = item['module_key']?.toString() ?? 'module_$index';
-          final isExpanded = _expandedModules[moduleKey] ?? true;
+          final isExpanded = _expandedModules[moduleKey] ?? false;
 
           int lessonCount = 0;
           for (final nested in modulesList) {
@@ -1461,7 +1461,14 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
               child: InkWell(
                 onTap: () {
                   setState(() {
-                    _expandedModules[moduleKey] = !isExpanded;
+                    if (isExpanded) {
+                      _expandedModules[moduleKey] = false;
+                    } else {
+                      for (final k in _expandedModules.keys.toList()) {
+                        _expandedModules[k] = false;
+                      }
+                      _expandedModules[moduleKey] = true;
+                    }
                   });
                 },
                 borderRadius: BorderRadius.circular(12),

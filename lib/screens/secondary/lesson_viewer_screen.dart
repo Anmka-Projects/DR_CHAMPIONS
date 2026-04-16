@@ -14,6 +14,7 @@ import 'package:get/get.dart';
 import 'package:pod_player/pod_player.dart';
 // ignore: implementation_imports — PodPlayerController does not expose playback speed; same instance Get.put uses internally.
 import 'package:pod_player/src/controllers/pod_getx_video_controller.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/design/app_colors.dart';
 import '../../core/navigation/route_names.dart';
@@ -69,6 +70,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   bool _useWebViewFallback = false;
   bool _isVimeoVideo = false;
   String? _vimeoId;
+  String? _vimeoHash;
+  String? _vimeoOriginalUrl;
   Map<String, dynamic>? _lessonContent;
   File? _tempVideoFile;
   final VideoDownloadService _downloadService = VideoDownloadService();
@@ -93,6 +96,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   bool _isForcingPortrait = false;
   Map<String, dynamic>? _pendingResume;
   bool _consumedVideoResumeSeek = false;
+  bool _isVimeoFullscreenActive = false;
 
   /// Avoid feedback when pausing the other player from exclusivity hooks.
   bool _silencingOtherPlayback = false;
@@ -1132,20 +1136,32 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           if (mounted) setState(() => _isVideoLoading = false);
         });
     } else if (videoUrl.toLowerCase().contains('vimeo.com')) {
-      final match = RegExp(r'vimeo\.com/(?:video/)?(\d+)')
-          .firstMatch(videoUrl.toLowerCase());
-      if (match != null) {
+      final extracted = _extractVimeoId(videoUrl);
+      if (extracted != null) {
         setState(() {
           _isVimeoVideo = true;
-          _vimeoId = match.group(1);
+          _vimeoId = extracted;
+          _vimeoHash = _extractVimeoHash(videoUrl);
+          _vimeoOriginalUrl = videoUrl;
           _isVideoLoading = false;
         });
       } else {
-        setState(() => _isVideoLoading = false);
+        // Vimeo URL matched, but we couldn't extract a numeric id.
+        // Fall back to direct playback flow so the UI doesn't get stuck.
+        setState(() {
+          _isVimeoVideo = false;
+          _vimeoId = null;
+          _vimeoHash = null;
+          _vimeoOriginalUrl = null;
+          _isVideoLoading = false;
+        });
+        _initializeDirectVideo(videoUrl);
       }
     } else {
       _isVimeoVideo = false;
       _vimeoId = null;
+      _vimeoHash = null;
+      _vimeoOriginalUrl = null;
       _initializeDirectVideo(videoUrl);
     }
 
@@ -1290,6 +1306,76 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     return url.trim();
   }
 
+  /// Extract Vimeo numeric video id from a Vimeo URL or id.
+  ///
+  /// Supports common formats like:
+  /// - `vimeo.com/<id>/<hash>`
+  /// - `vimeo.com/video/<id>`
+  /// - `player.vimeo.com/video/<id>`
+  /// - `vimeo.com/channels/<name>/<id>`
+  String? _extractVimeoId(String? urlOrId) {
+    final s = urlOrId?.trim();
+    if (s == null || s.isEmpty) return null;
+
+    // If the payload is already an id.
+    if (RegExp(r'^\d+$').hasMatch(s)) return s;
+
+    try {
+      final uri = Uri.parse(s);
+      for (final segment in uri.pathSegments) {
+        if (RegExp(r'^\d+$').hasMatch(segment)) return segment;
+      }
+    } catch (_) {
+      // If parsing fails, fall back to regex below.
+    }
+
+    // Fallback regex (best-effort for legacy formats).
+    final match = RegExp(r'vimeo\.com/(?:video/)?(\d+)')
+        .firstMatch(s.toLowerCase());
+    return match?.group(1);
+  }
+
+  /// Extract Vimeo hash token from URLs like `vimeo.com/<id>/<hash>`.
+  String? _extractVimeoHash(String? url) {
+    final s = url?.trim();
+    if (s == null || s.isEmpty) return null;
+    try {
+      final uri = Uri.parse(s);
+      final segments = uri.pathSegments.where((e) => e.isNotEmpty).toList();
+      for (var i = 0; i < segments.length - 1; i++) {
+        if (RegExp(r'^\d+$').hasMatch(segments[i])) {
+          final candidate = segments[i + 1].trim();
+          if (candidate.isNotEmpty && !RegExp(r'^\d+$').hasMatch(candidate)) {
+            return candidate;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _openCurrentVimeoExternally() async {
+    final id = _vimeoId;
+    if (id == null || id.isEmpty) return;
+    final original = _vimeoOriginalUrl?.trim();
+    final hash = _vimeoHash?.trim();
+    final fallbackUrl = hash != null && hash.isNotEmpty
+        ? 'https://vimeo.com/$id/$hash'
+        : 'https://vimeo.com/$id';
+    final raw = (original != null && original.isNotEmpty) ? original : fallbackUrl;
+    final uri = Uri.tryParse(raw);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  String _buildVimeoEmbedUrl() {
+    final id = _vimeoId ?? '';
+    final hashPart = (_vimeoHash != null && _vimeoHash!.isNotEmpty)
+        ? '&h=${Uri.encodeComponent(_vimeoHash!)}'
+        : '';
+    return 'https://player.vimeo.com/video/$id?autoplay=1&playsinline=1&title=0&byline=0&portrait=0$hashPart';
+  }
+
   Future<void> _initializeVideo() async {
     final lesson = widget.lesson;
     if (lesson == null) {
@@ -1330,6 +1416,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (vimeoId != null && vimeoId.isEmpty) {
       vimeoId = null;
     }
+    // If backend sends a full Vimeo URL instead of just the id, normalize it.
+    vimeoId = vimeoId != null ? _extractVimeoId(vimeoId) : null;
 
     videoId = videoId ??
         _lessonContent?['youtube_id']?.toString() ??
@@ -1375,19 +1463,19 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final bool isVimeoUrl =
         videoUrl != null && videoUrl.toLowerCase().contains('vimeo.com');
     if (vimeoId == null && isVimeoUrl) {
-      final match = RegExp(r'vimeo\.com/(?:video/)?(\d+)')
-          .firstMatch(videoUrl.toLowerCase());
-      vimeoId = match?.group(1);
+      vimeoId = _extractVimeoId(videoUrl);
     }
 
-    if (vimeoId != null || isVimeoUrl) {
+    if (vimeoId != null) {
       if (kDebugMode) {
-        print('🎬 Using Vimeo video: ${vimeoId ?? videoUrl}');
+        print('🎬 Using Vimeo video: $vimeoId');
       }
       if (mounted) {
         setState(() {
           _isVimeoVideo = true;
           _vimeoId = vimeoId;
+          _vimeoHash = _extractVimeoHash(videoUrl);
+          _vimeoOriginalUrl = videoUrl;
           _isVideoLoading = false;
         });
       }
@@ -1399,6 +1487,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         setState(() {
           _isVimeoVideo = false;
           _vimeoId = null;
+          _vimeoHash = null;
+          _vimeoOriginalUrl = null;
         });
       }
       // Use video URL if available, otherwise use YouTube ID
@@ -1973,6 +2063,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _isVimeoVideo = false;
     _vimeoId = null;
+    _vimeoHash = null;
+    _vimeoOriginalUrl = null;
     WidgetsBinding.instance.removeObserver(this);
     _progressTimer?.cancel();
     _controller?.dispose();
@@ -2032,6 +2124,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   void didChangeMetrics() {
     super.didChangeMetrics();
     if (!mounted) return;
+    if (_isVimeoFullscreenActive) return;
+    if (_isVimeoVideo) return;
     final view = WidgetsBinding.instance.platformDispatcher.views.first;
     final isLandscapeNow = view.physicalSize.width > view.physicalSize.height;
     if (isLandscapeNow && !_isPlayerFullscreen()) {
@@ -2337,15 +2431,38 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
     if (_isVimeoVideo && _vimeoId != null) {
       final html = '''
-   <!DOCTYPE html>
-   <html>
-   <body style="margin:0;background:#000;">
-   <iframe src="https://player.vimeo.com/video/$_vimeoId?autoplay=1&title=0&byline=0&portrait=0"
-     width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen" allowfullscreen>
-   </iframe>
-   </body>
-   </html>
-   ''';
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    iframe {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      border: 0;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <iframe
+    src="${_buildVimeoEmbedUrl()}"
+    allow="autoplay; fullscreen"
+    allowfullscreen>
+  </iframe>
+</body>
+</html>
+''';
 
       _webViewController ??= WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -2439,6 +2556,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     icon: const Icon(Icons.fullscreen_rounded,
                         color: Colors.white, size: 24),
                     onPressed: _openVideoFullscreen,
+                  ),
+                if (!_isVideoLoading && _isVimeoVideo && _vimeoId != null)
+                  IconButton(
+                    icon: const Icon(Icons.open_in_new_rounded,
+                        color: Colors.white, size: 22),
+                    tooltip: 'Open Vimeo',
+                    onPressed: _openCurrentVimeoExternally,
                   ),
               ],
             ),
@@ -2688,6 +2812,36 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 
   Future<void> _openVideoFullscreen() async {
+    if (_isVimeoVideo && _vimeoId != null && mounted) {
+      setState(() => _isVimeoFullscreenActive = true);
+      try {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => _VimeoFullscreenScreen(
+              embedUrl: _buildVimeoEmbedUrl(),
+            ),
+          ),
+        );
+      } finally {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.portraitUp,
+        ]);
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        if (mounted) {
+          setState(() => _isVimeoFullscreenActive = false);
+        } else {
+          _isVimeoFullscreenActive = false;
+        }
+      }
+      return;
+    }
+
     final c = _controller;
     if (c == null || !mounted) return;
     try {
@@ -4334,6 +4488,106 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             if (isPrimary) Icon(icon, size: 18, color: Colors.white),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _VimeoFullscreenScreen extends StatefulWidget {
+  final String embedUrl;
+
+  const _VimeoFullscreenScreen({required this.embedUrl});
+
+  @override
+  State<_VimeoFullscreenScreen> createState() => _VimeoFullscreenScreenState();
+}
+
+class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final html = '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    iframe {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      border: 0;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <iframe
+    src="${widget.embedUrl}"
+    allow="autoplay; fullscreen"
+    allowfullscreen>
+  </iframe>
+</body>
+</html>
+''';
+
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black)
+      ..loadHtmlString(html);
+
+    // Force landscape immersive mode for true video fullscreen.
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  @override
+  void dispose() {
+    // Restore lesson screen defaults on exit.
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: WebViewWidget(controller: _controller),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            right: 12,
+            child: Material(
+              color: Colors.black.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(24),
+              child: IconButton(
+                icon: const Icon(Icons.fullscreen_exit_rounded,
+                    color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -483,10 +483,26 @@ class CoursesService {
     String lessonId,
   ) async {
     try {
-      final response = await ApiClient.instance.get(
-        ApiEndpoints.courseLessonContent(courseId, lessonId),
-        requireAuth: true,
-      );
+      Map<String, dynamic> response;
+      try {
+        response = await ApiClient.instance.get(
+          ApiEndpoints.courseLessonContent(courseId, lessonId),
+          requireAuth: true,
+        );
+      } on ApiException catch (e) {
+        // Some backend deployments expose lesson details at:
+        // /courses/:courseId/lessons/:lessonId
+        // without a dedicated /content sub-route.
+        if (e.statusCode != 404) rethrow;
+        if (kDebugMode) {
+          print(
+              '⚠️ Lesson content endpoint returned 404; falling back to lesson details endpoint.');
+        }
+        response = await ApiClient.instance.get(
+          ApiEndpoints.courseLesson(courseId, lessonId),
+          requireAuth: true,
+        );
+      }
 
       if (kDebugMode) {
         print('📦 Lesson Content API Response:');

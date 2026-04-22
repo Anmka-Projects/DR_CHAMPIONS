@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/course_pricing.dart';
 import '../core/design/app_colors.dart';
+import '../l10n/app_localizations_en.dart';
 
 /// Premium Course Card - Modern and Attractive Design
 class PremiumCourseCard extends StatelessWidget {
@@ -17,22 +18,61 @@ class PremiumCourseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10nEn = AppLocalizationsEn();
+    final isAr = Localizations.localeOf(context).languageCode == 'ar';
     final isFree = courseIsEffectivelyFree(course);
+    final hasPricePlans = courseHasSubscriptionPlans(course);
     final imagePath = course['thumbnail'] ?? course['image'] ?? '';
-    final categoryName = course['category'] is Map
-        ? (course['category']?['name'] ?? '')
-        : (course['category'] ?? '');
+    final categoryName = courseCategoryEnglishLabel(course['category']);
     final title = course['title'] ?? '';
     final instructorName = course['instructor'] is Map
         ? (course['instructor']?['name'] ?? '')
         : (course['instructor'] ?? '');
-    final rating = course['rating'] ?? 0.0;
-    final hours = course['duration_hours'] ?? course['hours'] ?? 0;
+    final rating = courseCardRatingNum(course);
+    final hours = courseCardDurationHoursNum(course) ?? 0;
     final lessons = course['lessons_count'] ?? course['lessons'] ?? 0;
-    final price = courseCardDisplayAmount(course) ??
+    final fallbackAmount = courseCardDisplayAmount(course) ??
         tryParseCourseNum(course['price']) ??
         0;
-    
+    final currencyCode =
+        course['currency']?.toString().toUpperCase() ?? 'EGP';
+    final backendFinalPrice = tryParseCourseNum(course['price']);
+    final backendOriginalPrice = tryParseCourseNum(course['original_price']);
+    final backendDiscountPrice = tryParseCourseNum(course['discount_price']);
+    final hasBackendDiscount = backendDiscountPrice != null &&
+        backendOriginalPrice != null &&
+        backendDiscountPrice > 0 &&
+        backendOriginalPrice > backendDiscountPrice;
+    final discountedCurrentPriceText = hasBackendDiscount
+        ? formatSingleCurrencyPrice(
+            currency: currencyCode == 'USD' ? 'USD' : 'EGP',
+            amount: backendDiscountPrice,
+          )
+        : null;
+    final discountedOriginalPriceText = hasBackendDiscount
+        ? formatSingleCurrencyPrice(
+            currency: currencyCode == 'USD' ? 'USD' : 'EGP',
+            amount: backendOriginalPrice,
+          )
+        : null;
+    final paidPriceLabel = () {
+      if (backendFinalPrice != null && backendFinalPrice > 0) {
+        return formatSingleCurrencyPrice(
+          currency: currencyCode == 'USD' ? 'USD' : 'EGP',
+          amount: backendFinalPrice,
+        );
+      }
+      final compact = formatCoursePriceCompact(course);
+      if (compact != null && compact.isNotEmpty) return compact;
+      if (fallbackAmount > 0) {
+        return formatSingleCurrencyPrice(
+          currency: currencyCode == 'USD' ? 'USD' : 'EGP',
+          amount: fallbackAmount,
+        );
+      }
+      return '';
+    }();
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -151,7 +191,10 @@ class PremiumCourseCard extends StatelessWidget {
                       ],
                     ),
                     child: Text(
-                      isFree ? 'مجاني' : '${price.toInt()} ج.م',
+                      isFree ? l10nEn.free : paidPriceLabel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
                       style: GoogleFonts.cairo(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
@@ -160,6 +203,36 @@ class PremiumCourseCard extends StatelessWidget {
                     ),
                   ),
                 ),
+
+                if (hasPricePlans)
+                  Positioned(
+                    bottom: 12,
+                    right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0C52B3).withOpacity(0.92),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.sell_rounded,
+                              size: 12, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(
+                            isAr ? 'يوجد خطط أسعار' : 'Plans available',
+                            style: GoogleFonts.cairo(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 // Play button overlay
                 Positioned(
@@ -205,6 +278,31 @@ class PremiumCourseCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 8),
+
+                  if (hasBackendDiscount) ...[
+                    Row(
+                      children: [
+                        Text(
+                          discountedOriginalPriceText!,
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: AppColors.mutedForeground,
+                            decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          discountedCurrentPriceText!,
+                          style: GoogleFonts.cairo(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFFEA580C),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   
                   // Instructor
                   Row(
@@ -245,7 +343,7 @@ class PremiumCourseCard extends StatelessWidget {
                             const Icon(Icons.star_rounded, size: 14, color: Colors.amber),
                             const SizedBox(width: 3),
                             Text(
-                              rating.toString(),
+                              rating.toStringAsFixed(1),
                               style: GoogleFonts.cairo(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
@@ -260,7 +358,7 @@ class PremiumCourseCard extends StatelessWidget {
                       Icon(Icons.access_time_rounded, size: 14, color: Colors.grey[400]),
                       const SizedBox(width: 3),
                       Text(
-                        '$hoursس',
+                        l10nEn.hoursUnitShort(hours),
                         style: GoogleFonts.cairo(fontSize: 11, color: AppColors.mutedForeground),
                       ),
                       const SizedBox(width: 8),
@@ -268,7 +366,13 @@ class PremiumCourseCard extends StatelessWidget {
                       Icon(Icons.menu_book_rounded, size: 14, color: Colors.grey[400]),
                       const SizedBox(width: 3),
                       Text(
-                        '$lessons درس',
+                        l10nEn.lessonsCount(
+                          () {
+                            if (lessons is int) return lessons;
+                            if (lessons is num) return lessons.toInt();
+                            return int.tryParse('$lessons') ?? 0;
+                          }(),
+                        ),
                         style: GoogleFonts.cairo(fontSize: 11, color: AppColors.mutedForeground),
                       ),
                     ],

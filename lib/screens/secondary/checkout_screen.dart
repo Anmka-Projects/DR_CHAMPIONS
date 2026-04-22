@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../core/course_pricing.dart';
 import '../../core/design/app_colors.dart';
 import '../../core/design/app_text_styles.dart';
 import '../../core/design/app_radius.dart';
@@ -66,28 +67,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   void _loadInitialPrice() {
     final course = widget.course;
-    final selectedPlan = course?['selected_plan'] as Map<String, dynamic>?;
-    final rawCurrency =
-        selectedPlan?['currency'] ?? course?['currency'] ?? 'EGP';
-    final cc = rawCurrency.toString().trim().toUpperCase();
-    _checkoutCurrencyCode =
-        (cc == 'USD' || cc == 'EGP') ? cc : 'EGP';
-
-    final price = selectedPlan?['price'] ?? course?['price'];
-    if (price == null) {
-      _originalPrice = 40.0;
-      _finalPrice = 40.0;
+    if (course == null) {
+      _originalPrice = 0;
+      _finalPrice = 0;
+      _checkoutCurrencyCode = 'EGP';
       return;
     }
-    if (price is num) {
-      _originalPrice = price.toDouble();
-    } else if (price is String) {
-      final parsed = num.tryParse(price);
-      _originalPrice = parsed?.toDouble() ?? 40.0;
-    } else {
-      _originalPrice = 40.0;
-    }
-    _finalPrice = _originalPrice;
+    final parsed = parseCheckoutPricing(course);
+    _checkoutCurrencyCode = parsed.currency;
+    _originalPrice = parsed.amount;
+    _finalPrice = parsed.amount;
   }
 
   String _formatCheckoutMoney(AppLocalizations l10n, double amount) {
@@ -223,7 +212,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         courseId: courseId,
         paymentMethod: paymentMethod,
         couponCode: _couponApplied ? _couponCode : null,
-        planId: widget.course?['selected_plan']?['id']?.toString(),
+        planId:
+            widget.course?['checkout_selected_plan']?['id']?.toString(),
       );
 
       if (kDebugMode) {
@@ -483,14 +473,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                       color: AppColors.purple,
                                     ),
                                   ),
-                                  if (course['selected_plan'] != null &&
-                                      course['selected_plan'] is Map &&
-                                      (course['selected_plan']['name'] ?? '')
+                                  if (course['checkout_selected_plan'] != null &&
+                                      course['checkout_selected_plan'] is Map &&
+                                      (course['checkout_selected_plan']['name'] ??
+                                              '')
                                           .toString()
                                           .isNotEmpty) ...[
                                     const SizedBox(height: 4),
                                     Text(
-                                      course['selected_plan']['name'].toString(),
+                                      course['checkout_selected_plan']['name']
+                                          .toString(),
                                       style: AppTextStyles.bodySmall(
                                         color: AppColors.mutedForeground,
                                       ),

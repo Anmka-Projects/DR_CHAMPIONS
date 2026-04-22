@@ -95,6 +95,15 @@ Map<String, dynamic>? selectFirstLessonForPlayback(
   return null;
 }
 
+String? _resolveCourseIdFromMap(Map<String, dynamic>? course) {
+  if (course == null) return null;
+  for (final k in ['id', 'uuid', 'course_id']) {
+    final v = course[k]?.toString().trim();
+    if (v != null && v.isNotEmpty) return v;
+  }
+  return null;
+}
+
 /// Modern Course Details Screen with Beautiful UI
 class CourseDetailsScreen extends StatefulWidget {
   final Map<String, dynamic>? course;
@@ -139,8 +148,8 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
 
   Future<void> _loadCourseDetails() async {
     // If course data is already provided, use it
-    if (widget.course != null && widget.course!['id'] != null) {
-      final courseId = widget.course!['id']?.toString();
+    if (widget.course != null) {
+      final courseId = _resolveCourseIdFromMap(widget.course);
       if (courseId != null && courseId.isNotEmpty) {
         setState(() => _isLoading = true);
         try {
@@ -808,6 +817,14 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       return const SizedBox.shrink();
     }
     final coursePriceText = _formatCoursePriceText(course);
+    final currencyCode =
+        course['currency']?.toString().toUpperCase() == 'USD' ? 'USD' : 'EGP';
+    final backendOriginalPrice = _tryParseNum(course['original_price']);
+    final backendDiscountPrice = _tryParseNum(course['discount_price']);
+    final hasBackendDiscount = backendOriginalPrice != null &&
+        backendDiscountPrice != null &&
+        backendDiscountPrice > 0 &&
+        backendOriginalPrice > backendDiscountPrice;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -887,6 +904,36 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
               ),
             ],
           ),
+          if (!isFree && hasBackendDiscount) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  _formatSingleCurrencyPrice(
+                    currency: currencyCode,
+                    amount: backendOriginalPrice,
+                  ),
+                  style: GoogleFonts.cairo(
+                    fontSize: 12,
+                    color: AppColors.mutedForeground,
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _formatSingleCurrencyPrice(
+                    currency: currencyCode,
+                    amount: backendDiscountPrice,
+                  ),
+                  style: GoogleFonts.cairo(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFFEA580C),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
 
           // Title
@@ -1112,17 +1159,11 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   }
 
   String? _formatCoursePriceText(Map<String, dynamic> course) {
-    // Prefer dual-currency when available (EGP + USD).
-    final discountEgp = _tryParseNum(course['discount_price_egp']);
-    final discountUsd = _tryParseNum(course['discount_price_usd']);
-    final priceEgp = _tryParseNum(course['price_egp']);
-    final priceUsd = _tryParseNum(course['price_usd']);
-
-    final hasAnyDiscount = (discountEgp != null && discountEgp != 0) ||
-        (discountUsd != null && discountUsd != 0);
-    final dualText = hasAnyDiscount
-        ? _formatDualCurrencyFromValues(egp: discountEgp, usd: discountUsd)
-        : _formatDualCurrencyFromValues(egp: priceEgp, usd: priceUsd);
+    // Prefer dual-currency when available (EGP + USD); per-currency discount only.
+    final dualText = _formatDualCurrencyFromValues(
+      egp: effectiveCoursePriceEgp(course),
+      usd: effectiveCoursePriceUsd(course),
+    );
     if (dualText.isNotEmpty) return dualText;
 
     // Spec111: single currency
@@ -2067,6 +2108,21 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     final examTitle =
         exam['title']?.toString() ?? AppLocalizations.of(context)!.exam;
     final examDescription = exam['description']?.toString() ?? '';
+    final targetType =
+        exam['target_type']?.toString().toLowerCase().trim() ??
+            exam['targetType']?.toString().toLowerCase().trim() ??
+            ((exam['lesson_id'] != null || exam['lessonId'] != null)
+                ? 'lesson'
+                : 'course');
+    final lessonName =
+        exam['lesson_name']?.toString() ?? exam['lessonName']?.toString() ?? '';
+    final targetLabel = targetType == 'lesson'
+        ? (Localizations.localeOf(context).languageCode == 'ar'
+            ? 'امتحان الدرس'
+            : 'Lesson exam')
+        : (Localizations.localeOf(context).languageCode == 'ar'
+            ? 'امتحان الدورة'
+            : 'Course exam');
     final isStartingThisExam = _startingExamId == examId;
     final hasCompletedExam =
         bestScore != null || attemptsUsed > 0 || isPassed == true;
@@ -2141,6 +2197,53 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                               color:
                                   isTrial ? Colors.white : AppColors.foreground,
                             ),
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isTrial
+                                      ? Colors.white.withValues(alpha: 0.22)
+                                      : AppColors.purple.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  targetLabel,
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: isTrial ? Colors.white : AppColors.purple,
+                                  ),
+                                ),
+                              ),
+                              if (lessonName.trim().isNotEmpty &&
+                                  targetType == 'lesson')
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: isTrial
+                                        ? Colors.white.withValues(alpha: 0.18)
+                                        : Colors.blue.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    lessonName,
+                                    style: GoogleFonts.cairo(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: isTrial
+                                          ? Colors.white
+                                          : const Color(0xFF1D4ED8),
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                           if (examDescription.isNotEmpty) ...[
                             const SizedBox(height: 4),
@@ -2596,20 +2699,261 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     final subscriptionPlans = courseData['course_subscription_plans'] ??
         courseData['subscription_plans'];
     if (subscriptionPlans is List && subscriptionPlans.isNotEmpty) {
-      final selectedPlan =
-          await _showSubscriptionPlansBottomSheet(subscriptionPlans);
-      if (!mounted || selectedPlan == null) return;
-
-      context.push(
-        RouteNames.checkout,
-        extra: {...courseData, 'selected_plan': selectedPlan},
+      final choice = await _showPaymentOptionsBottomSheet(
+        courseData: courseData,
+        plans: subscriptionPlans,
       );
+      if (!mounted || choice == null) return;
+
+      final choiceType = choice['__checkout_choice']?.toString();
+      if (choiceType == 'plan') {
+        final selectedPlan = choice['plan'];
+        if (selectedPlan is! Map<String, dynamic>) return;
+        context.push(
+          RouteNames.checkout,
+          extra: {...courseData, 'checkout_selected_plan': selectedPlan},
+        );
+      } else {
+        context.push(
+          RouteNames.checkout,
+          extra: checkoutPayloadForFullCoursePrice(courseData),
+        );
+      }
       return;
     }
 
-    context.push(RouteNames.checkout, extra: courseData);
+    context.push(
+      RouteNames.checkout,
+      extra: checkoutPayloadForNavigation(courseData),
+    );
   }
 
+  Future<Map<String, dynamic>?> _showPaymentOptionsBottomSheet({
+    required Map<String, dynamic> courseData,
+    required List plans,
+  }) async {
+    final parsedPlans = plans.whereType<Map>().map((plan) {
+      return plan.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+    }).toList();
+    if (parsedPlans.isEmpty) return null;
+
+    final fullPriceText = () {
+      final compact = formatCoursePriceCompact(courseData);
+      if (compact != null && compact.isNotEmpty) return compact;
+      final parsed = parseCourseTotalPricing(courseData);
+      if (parsed.amount <= 0) return AppLocalizations.of(context)!.notAvailable;
+      return _formatSingleCurrencyPrice(
+        currency: parsed.currency,
+        amount: parsed.amount,
+      );
+    }();
+
+    return showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        int selectedIndex = 0; // 0 = full price, 1..n = plans
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      AppLocalizations.of(context)!.completePurchase,
+                      style: GoogleFonts.cairo(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _buildPaymentChoiceTile(
+                              title: AppLocalizations.of(context)!.coursePrice,
+                              subtitle:
+                                  '${AppLocalizations.of(context)!.total}: $fullPriceText',
+                              isSelected: selectedIndex == 0,
+                              onTap: () =>
+                                  setModalState(() => selectedIndex = 0),
+                            ),
+                            const SizedBox(height: 8),
+                            ...List.generate(parsedPlans.length, (index) {
+                              final plan = parsedPlans[index];
+                              final cardIndex = index + 1;
+                              final planName = plan['name']?.toString() ??
+                                  AppLocalizations.of(context)!
+                                      .subscriptionPlan;
+                              final planPriceText = () {
+                                final currency =
+                                    plan['currency']?.toString().toUpperCase();
+                                final price = _tryParseNum(plan['price']);
+                                if ((currency == 'EGP' || currency == 'USD') &&
+                                    price != null &&
+                                    price > 0) {
+                                  return _formatSingleCurrencyPrice(
+                                    currency: currency!,
+                                    amount: price,
+                                  );
+                                }
+                                final planMap = Map<String, dynamic>.from(plan);
+                                final formatted = _formatDualCurrencyFromValues(
+                                  egp: effectiveCoursePriceEgp(planMap),
+                                  usd: effectiveCoursePriceUsd(planMap),
+                                );
+                                if (formatted.isNotEmpty) return formatted;
+                                return AppLocalizations.of(context)!
+                                    .notAvailable;
+                              }();
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _buildPaymentChoiceTile(
+                                  title: planName,
+                                  subtitle: planPriceText,
+                                  isSelected: selectedIndex == cardIndex,
+                                  onTap: () => setModalState(
+                                      () => selectedIndex = cardIndex),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          if (selectedIndex == 0) {
+                            Navigator.of(context)
+                                .pop({'__checkout_choice': 'full'});
+                          } else {
+                            final plan = parsedPlans[selectedIndex - 1];
+                            Navigator.of(context).pop({
+                              '__checkout_choice': 'plan',
+                              'plan': plan,
+                            });
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.purple,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(48),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          AppLocalizations.of(context)!.continueToPayment,
+                          style: GoogleFonts.cairo(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildPaymentChoiceTile({
+    required String title,
+    required String subtitle,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.lavenderLight : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? AppColors.purple : Colors.grey.shade300,
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.foreground,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.cairo(
+                      fontSize: 12,
+                      color: AppColors.mutedForeground,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              isSelected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_off_rounded,
+              color: isSelected ? AppColors.purple : Colors.grey.shade500,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ignore: unused_element
   Future<Map<String, dynamic>?> _showSubscriptionPlansBottomSheet(
       List plans) async {
     final parsedPlans = plans.whereType<Map>().map((plan) {
@@ -2711,11 +3055,12 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                                   );
                                 }
 
-                                // Fallback: old dual fields (some payloads)
-                                final egp = _tryParseNum(plan['price_egp']);
-                                final usd = _tryParseNum(plan['price_usd']);
+                                // Fallback: dual fields / per-currency discounts
+                                final planMap = Map<String, dynamic>.from(plan);
                                 final formatted = _formatDualCurrencyFromValues(
-                                    egp: egp, usd: usd);
+                                  egp: effectiveCoursePriceEgp(planMap),
+                                  usd: effectiveCoursePriceUsd(planMap),
+                                );
                                 if (formatted.isNotEmpty) return formatted;
 
                                 // Legacy: single `price` assumed EGP

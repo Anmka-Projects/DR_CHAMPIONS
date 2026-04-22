@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import '../../core/design/app_colors.dart';
+import '../../core/resource_url_utils.dart';
 import '../../services/token_storage_service.dart';
 
 /// PDF Viewer Screen - Display PDF files using flutter_pdfview
@@ -213,6 +214,38 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         } catch (e) {
           if (kDebugMode) {
             print('⚠️ Failed to download PDF without authentication: $e');
+          }
+        }
+      }
+
+      // Google Drive share links often need the `uc?export=download` endpoint for raw bytes.
+      if (pdfFile == null) {
+        final driveDl = googleDriveDirectDownloadUrl(pdfUrl);
+        if (driveDl != null) {
+          try {
+            if (kDebugMode) {
+              print('📥 Trying Google Drive uc export for PDF bytes...');
+            }
+            final headers = <String, String>{};
+            if (token != null && token.isNotEmpty) {
+              headers['Authorization'] = 'Bearer $token';
+            }
+            final response = await http
+                .get(Uri.parse(driveDl), headers: headers)
+                .timeout(const Duration(seconds: 45));
+            if (response.statusCode == 200) {
+              final contentType = response.headers['content-type'] ?? '';
+              if (contentType.contains('pdf') ||
+                  (response.bodyBytes.length > 100 &&
+                      String.fromCharCodes(response.bodyBytes.take(4)) ==
+                          '%PDF')) {
+                pdfFile = await _savePdfToFile(response.bodyBytes);
+              }
+            }
+          } catch (e) {
+            if (kDebugMode) {
+              print('⚠️ Google Drive PDF download failed: $e');
+            }
           }
         }
       }

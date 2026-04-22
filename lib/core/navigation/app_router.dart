@@ -35,6 +35,7 @@ import '../../screens/secondary/all_courses_screen.dart';
 import '../../screens/secondary/edit_profile_screen.dart';
 import '../../screens/secondary/change_password_screen.dart';
 import '../../screens/secondary/pdf_viewer_screen.dart';
+import '../../screens/secondary/embed_web_viewer_screen.dart';
 import '../../screens/secondary/center_attendance_screen.dart';
 import '../../screens/secondary/teachers_screen.dart';
 import '../../screens/secondary/teacher_details_screen.dart';
@@ -373,6 +374,27 @@ class AppRouter {
             key: state.pageKey,
             child: PdfViewerScreen(
               pdfUrl: pdfUrl,
+              title: title,
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: RouteNames.embedWebViewer,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          var url = '';
+          String? title;
+          if (extra is Map<String, dynamic>) {
+            url = extra['url']?.toString() ?? '';
+            title = extra['title']?.toString();
+          } else if (extra is String) {
+            url = extra;
+          }
+          return _buildPageWithTransition(
+            key: state.pageKey,
+            child: EmbedWebViewerScreen(
+              initialUrl: url,
               title: title,
             ),
           );

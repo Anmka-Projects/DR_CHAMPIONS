@@ -14,17 +14,21 @@ import 'package:get/get.dart';
 import 'package:pod_player/pod_player.dart';
 // ignore: implementation_imports — PodPlayerController does not expose playback speed; same instance Get.put uses internally.
 import 'package:pod_player/src/controllers/pod_getx_video_controller.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../../core/api/api_endpoints.dart';
 import '../../core/design/app_colors.dart';
 import '../../core/navigation/route_names.dart';
+import '../../core/resource_url_utils.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/courses_service.dart';
+import '../../services/exams_service.dart';
 import '../../services/lesson_resume_service.dart';
+import 'course_details_screen.dart';
 import '../../services/profile_service.dart';
 import '../../services/token_storage_service.dart';
 import '../../services/video_download_service.dart';
 import '../../services/youtube_video_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class _LessonResumeSnapshot {
   final String courseId;
@@ -46,6 +50,23 @@ class _LessonResumeSnapshot {
     required this.watchedSeconds,
     required this.lessonMarkedComplete,
   });
+}
+
+bool _allowEmbeddedVimeoTopLevelNavigation(String rawUrl) {
+  final url = rawUrl.trim();
+  if (url.isEmpty) return true;
+  final lower = url.toLowerCase();
+  if (lower.startsWith('about:blank') ||
+      lower.startsWith('data:') ||
+      lower.startsWith('javascript:') ||
+      lower.startsWith('blob:')) {
+    return true;
+  }
+  // Block top-level external navigation attempts from embedded Vimeo controls.
+  if (lower.startsWith('http://') || lower.startsWith('https://')) {
+    return false;
+  }
+  return true;
 }
 
 /// Lesson Viewer Screen - Modern & Eye-Friendly Design
@@ -71,7 +92,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   bool _isVimeoVideo = false;
   String? _vimeoId;
   String? _vimeoHash;
-  String? _vimeoOriginalUrl;
   Map<String, dynamic>? _lessonContent;
   File? _tempVideoFile;
   final VideoDownloadService _downloadService = VideoDownloadService();
@@ -97,6 +117,10 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   Map<String, dynamic>? _pendingResume;
   bool _consumedVideoResumeSeek = false;
   bool _isVimeoFullscreenActive = false;
+  int _vimeoLastPositionSeconds = 0;
+  String? _lastLoadedVimeoEmbedUrl;
+  final PageController _heroImagePageController = PageController();
+  int _heroImageIndex = 0;
 
   /// Avoid feedback when pausing the other player from exclusivity hooks.
   bool _silencingOtherPlayback = false;
@@ -107,6 +131,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   static const String _lessonPanelAudio = 'audio';
   static const String _lessonPanelVideos = 'videos';
   static const String _lessonPanelPdfs = 'pdfs';
+  static const String _lessonPanelExams = 'exams';
   static const String _lessonPanelDownload = 'download';
   static const String _lessonPanelFiles = 'files';
 
@@ -115,6 +140,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   String? _activePdfUrl;
   WebViewController? _pdfWebViewController;
   bool _isPdfLoading = false;
+  bool _isLoadingLessonExams = false;
+  List<Map<String, dynamic>> _lessonExams = [];
+  String? _startingLessonExamId;
 
   @override
   void initState() {
@@ -141,6 +169,10 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (oldId != newId) {
       _openLessonPanel = null;
       _lessonAccordionUserInteracted = false;
+      _heroImageIndex = 0;
+      if (_heroImagePageController.hasClients) {
+        _heroImagePageController.jumpToPage(0);
+      }
       unawaited(_pausePlaybackOnLessonChange());
     }
   }
@@ -237,7 +269,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     }
     if (afterOpen == _lessonPanelAudio) {
       _pauseMainVideoPlayback();
-    } else if (afterOpen != null && afterOpen != _lessonPanelVideos) {
+    } else if (afterOpen != null &&
+        afterOpen != _lessonPanelVideos &&
+        afterOpen != _lessonPanelExams) {
       _pauseMainVideoPlayback();
     }
     if (afterOpen != _lessonPanelAudio) {
@@ -259,6 +293,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     required Color accent,
     int? badge,
     required Widget child,
+    VoidCallback? onHeaderTap,
   }) {
     final open = _isLessonPanelOpen(panelId);
     return Padding(
@@ -281,7 +316,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: () => _toggleLessonPanel(panelId),
+                onTap: onHeaderTap ?? () => _toggleLessonPanel(panelId),
                 borderRadius: BorderRadius.vertical(
                   top: const Radius.circular(20),
                   bottom: Radius.circular(open ? 0 : 20),
@@ -622,6 +657,11 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       if (t.isEmpty) return;
       if (t.startsWith('http://') || t.startsWith('https://')) {
         urls.add(t);
+      } else {
+        final normalized = ApiEndpoints.getImageUrl(t);
+        if (normalized.isNotEmpty) {
+          urls.add(normalized);
+        }
       }
     }
 
@@ -671,47 +711,20 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           final url = imageUrls[index];
           return GestureDetector(
             onTap: () {
+              if (forAccordion) {
+                _toggleLessonPanel(_lessonPanelImages);
+                setState(() => _heroImageIndex = index);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!_heroImagePageController.hasClients) return;
+                  _heroImagePageController.jumpToPage(index);
+                });
+                return;
+              }
               showDialog<void>(
                 context: context,
-                builder: (context) => Dialog(
-                  insetPadding: const EdgeInsets.all(16),
-                  child: Container(
-                    color: Colors.black,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: InteractiveViewer(
-                            child: Image.network(
-                              url,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(24.0),
-                                  child: Text(
-                                    'تعذر تحميل الصورة',
-                                    style: GoogleFonts.cairo(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close_rounded,
-                                color: Colors.white),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                builder: (context) => _LessonImagesViewerDialog(
+                  urls: imageUrls,
+                  initialIndex: index,
                 ),
               );
             },
@@ -782,7 +795,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               ),
               const SizedBox(width: 12),
               Text(
-                'صور الدرس',
+                AppLocalizations.of(context)!.lessonImages,
                 style: GoogleFonts.cairo(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -964,6 +977,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
       await _initializeAudioFromContent();
       await _applySavedAudioResumeIfNeeded();
+      await _loadLessonExams();
     } catch (e) {
       if (kDebugMode) {
         print('❌ Error loading lesson content: $e');
@@ -981,7 +995,286 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
       await _initializeAudioFromContent();
       await _applySavedAudioResumeIfNeeded();
+      await _loadLessonExams();
     }
+  }
+
+  Future<void> _loadLessonExams() async {
+    final lesson = widget.lesson;
+    if (lesson == null) return;
+
+    String? courseId = widget.courseId;
+    courseId ??= lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
+    final lessonId = lesson['id']?.toString();
+    if (courseId == null ||
+        courseId.isEmpty ||
+        lessonId == null ||
+        lessonId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _lessonExams = [];
+        _isLoadingLessonExams = false;
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _isLoadingLessonExams = true);
+    }
+
+    try {
+      final exams = await ExamsService.instance.getCourseExams(
+        courseId,
+        lessonId: lessonId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _lessonExams = exams
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) {
+              final targetType =
+                  e['target_type']?.toString().toLowerCase().trim() ??
+                      e['targetType']?.toString().toLowerCase().trim() ??
+                      '';
+              if (targetType == 'lesson') return true;
+              final examLessonId =
+                  e['lesson_id']?.toString() ?? e['lessonId']?.toString();
+              return examLessonId != null &&
+                  examLessonId.isNotEmpty &&
+                  examLessonId == lessonId;
+            })
+            .toList();
+        _isLoadingLessonExams = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _lessonExams = [];
+        _isLoadingLessonExams = false;
+      });
+    }
+  }
+
+  Future<void> _startLessonExam(Map<String, dynamic> examData) async {
+    final examId = examData['id']?.toString() ?? '';
+    if (examId.isEmpty) return;
+
+    final lesson = widget.lesson;
+    if (lesson == null) return;
+    String? courseId = widget.courseId;
+    courseId ??= lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
+    if (courseId == null || courseId.isEmpty) return;
+
+    try {
+      setState(() => _startingLessonExamId = examId);
+      final examSession = await ExamsService.instance.startExam(courseId, examId);
+      final questions = examSession['questions'] as List?;
+      final attemptId = examSession['attempt_id']?.toString();
+      if (questions == null || questions.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.noQuestionsAvailable,
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      final submittedResult = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TrialExamScreen(
+            examId: examId,
+            courseId: courseId!,
+            attemptId: attemptId,
+            courseName: (widget.lesson?['title']?.toString().isNotEmpty ?? false)
+                ? widget.lesson!['title'].toString()
+                : AppLocalizations.of(context)!.course,
+            examData: examData,
+            examSession: examSession,
+          ),
+        ),
+      );
+      if (!mounted) return;
+      if (submittedResult is Map) {
+        await _loadLessonExams();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst('Exception: ', ''),
+            style: GoogleFonts.cairo(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _startingLessonExamId = null);
+      }
+    }
+  }
+
+  Widget _buildLessonExamsSection() {
+    if (_isLoadingLessonExams) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.purple),
+        ),
+      );
+    }
+    if (_lessonExams.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Text(
+          Localizations.localeOf(context).languageCode == 'ar'
+              ? 'لا توجد امتحانات لهذا الدرس حالياً'
+              : 'No exams available for this lesson yet',
+          style: GoogleFonts.cairo(
+            fontSize: 13,
+            color: AppColors.mutedForeground,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: _lessonExams.map((exam) {
+        final examId = exam['id']?.toString() ?? '';
+        final title = exam['title']?.toString().trim().isNotEmpty == true
+            ? exam['title'].toString()
+            : AppLocalizations.of(context)!.exam;
+        final targetType =
+            exam['target_type']?.toString().toLowerCase().trim() ??
+                exam['targetType']?.toString().toLowerCase().trim() ??
+                'lesson';
+        final badgeText = targetType == 'course'
+            ? (Localizations.localeOf(context).languageCode == 'ar'
+                ? 'امتحان الدورة'
+                : 'Course exam')
+            : (Localizations.localeOf(context).languageCode == 'ar'
+                ? 'امتحان الدرس'
+                : 'Lesson exam');
+        final canStart = exam['can_start'] == true;
+        final isStarting = _startingLessonExamId == examId;
+        final duration = exam['duration_minutes'];
+        final questions = exam['questions_count'];
+        final lessonName = exam['lesson_name']?.toString();
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F9FC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: GoogleFonts.cairo(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.purple.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      badgeText,
+                      style: GoogleFonts.cairo(
+                        fontSize: 10,
+                        color: AppColors.purple,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (lessonName != null &&
+                  lessonName.trim().isNotEmpty &&
+                  targetType == 'lesson') ...[
+                const SizedBox(height: 4),
+                Text(
+                  lessonName,
+                  style: GoogleFonts.cairo(
+                    fontSize: 12,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (questions != null)
+                    Text(
+                      '${questions.toString()} ${AppLocalizations.of(context)!.question}',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  if (questions != null && duration != null)
+                    const SizedBox(width: 10),
+                  if (duration != null)
+                    Text(
+                      '${duration.toString()} ${AppLocalizations.of(context)!.minute}',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: (!canStart || isStarting)
+                        ? null
+                        : () => _startLessonExam(exam),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.purple,
+                      minimumSize: const Size(92, 36),
+                    ),
+                    child: isStarting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            AppLocalizations.of(context)!.startExam,
+                            style: GoogleFonts.cairo(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
   }
 
   List<String> _collectAllAudioUrls() {
@@ -1142,7 +1435,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _isVimeoVideo = true;
           _vimeoId = extracted;
           _vimeoHash = _extractVimeoHash(videoUrl);
-          _vimeoOriginalUrl = videoUrl;
           _isVideoLoading = false;
         });
       } else {
@@ -1152,7 +1444,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _isVimeoVideo = false;
           _vimeoId = null;
           _vimeoHash = null;
-          _vimeoOriginalUrl = null;
           _isVideoLoading = false;
         });
         _initializeDirectVideo(videoUrl);
@@ -1161,7 +1452,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       _isVimeoVideo = false;
       _vimeoId = null;
       _vimeoHash = null;
-      _vimeoOriginalUrl = null;
       _initializeDirectVideo(videoUrl);
     }
 
@@ -1330,8 +1620,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     }
 
     // Fallback regex (best-effort for legacy formats).
-    final match = RegExp(r'vimeo\.com/(?:video/)?(\d+)')
-        .firstMatch(s.toLowerCase());
+    final match =
+        RegExp(r'vimeo\.com/(?:video/)?(\d+)').firstMatch(s.toLowerCase());
     return match?.group(1);
   }
 
@@ -1354,26 +1644,75 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     return null;
   }
 
-  Future<void> _openCurrentVimeoExternally() async {
-    final id = _vimeoId;
-    if (id == null || id.isEmpty) return;
-    final original = _vimeoOriginalUrl?.trim();
-    final hash = _vimeoHash?.trim();
-    final fallbackUrl = hash != null && hash.isNotEmpty
-        ? 'https://vimeo.com/$id/$hash'
-        : 'https://vimeo.com/$id';
-    final raw = (original != null && original.isNotEmpty) ? original : fallbackUrl;
-    final uri = Uri.tryParse(raw);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  String _buildVimeoEmbedUrl() {
+  String _buildVimeoEmbedUrl({int? startAtSeconds}) {
     final id = _vimeoId ?? '';
     final hashPart = (_vimeoHash != null && _vimeoHash!.isNotEmpty)
         ? '&h=${Uri.encodeComponent(_vimeoHash!)}'
         : '';
-    return 'https://player.vimeo.com/video/$id?autoplay=1&playsinline=1&title=0&byline=0&portrait=0$hashPart';
+    final startAt = (startAtSeconds ?? 0);
+    final startFragment = startAt > 0 ? '#t=${startAt}s' : '';
+    return 'https://player.vimeo.com/video/$id?autoplay=1&playsinline=1&title=0&byline=0&portrait=0$hashPart$startFragment';
+  }
+
+  Future<int> _readVimeoCurrentSeconds() async {
+    final controller = _webViewController;
+    if (!_isVimeoVideo || _vimeoId == null || controller == null) {
+      return _vimeoLastPositionSeconds;
+    }
+
+    int? _parseJsNumber(dynamic value) {
+      final raw = '$value'.replaceAll('"', '').trim();
+      final asDouble = double.tryParse(raw);
+      if (asDouble != null && asDouble >= 0) return asDouble.floor();
+      return null;
+    }
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        final result = await controller.runJavaScriptReturningResult(
+            'window.vimeoGetCurrentTime ? window.vimeoGetCurrentTime() : (window.vimeoLastTime ?? -1);');
+        final parsed = _parseJsNumber(result);
+        if (parsed != null) {
+          _vimeoLastPositionSeconds = parsed;
+          return _vimeoLastPositionSeconds;
+        }
+      } catch (_) {}
+
+      // Fallback for WebView engines that don't resolve async JS return values.
+      try {
+        final fallback = await controller
+            .runJavaScriptReturningResult('window.vimeoLastTime ?? -1;');
+        final parsed = _parseJsNumber(fallback);
+        if (parsed != null) {
+          _vimeoLastPositionSeconds = parsed;
+          return _vimeoLastPositionSeconds;
+        }
+      } catch (_) {}
+
+      if (attempt < 2) {
+        await Future.delayed(const Duration(milliseconds: 140));
+      }
+    }
+    return _vimeoLastPositionSeconds;
+  }
+
+  Future<void> _seekVimeoToSeconds(int seconds) async {
+    final controller = _webViewController;
+    if (!_isVimeoVideo || _vimeoId == null || controller == null) return;
+    if (seconds < 0) return;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        await controller.runJavaScript('window.vimeoLastTime = $seconds;');
+        await controller.runJavaScript(
+            'window.vimeoSeekTo ? window.vimeoSeekTo($seconds) : null;');
+        _vimeoLastPositionSeconds = seconds;
+        return;
+      } catch (_) {}
+      if (attempt < 2) {
+        await Future.delayed(const Duration(milliseconds: 180));
+      }
+    }
+    _vimeoLastPositionSeconds = seconds;
   }
 
   Future<void> _initializeVideo() async {
@@ -1475,7 +1814,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _isVimeoVideo = true;
           _vimeoId = vimeoId;
           _vimeoHash = _extractVimeoHash(videoUrl);
-          _vimeoOriginalUrl = videoUrl;
           _isVideoLoading = false;
         });
       }
@@ -1488,18 +1826,27 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _isVimeoVideo = false;
           _vimeoId = null;
           _vimeoHash = null;
-          _vimeoOriginalUrl = null;
+          _lastLoadedVimeoEmbedUrl = null;
         });
       }
       // Use video URL if available, otherwise use YouTube ID
       if (videoUrl != null && videoUrl.isNotEmpty) {
         // Check if it's a YouTube URL
         if (videoUrl.contains('youtube.com') || videoUrl.contains('youtu.be')) {
+          final youtubeSource = _buildYoutubeSourceFromIdOrUrl(videoUrl);
+          if (youtubeSource == null) {
+            if (kDebugMode) {
+              print(
+                  '⚠️ Invalid YouTube URL in lesson data. Showing no-video state.');
+            }
+            _setVideoUnavailableState();
+            return;
+          }
           if (kDebugMode) {
-            print('📺 Using YouTube URL: $videoUrl');
+            print('📺 Using YouTube URL: $youtubeSource');
           }
           _controller = PodPlayerController(
-            playVideoFrom: PlayVideoFrom.youtube(videoUrl),
+            playVideoFrom: PlayVideoFrom.youtube(youtubeSource),
             podPlayerConfig: const PodPlayerConfig(
               autoPlay: false,
               isLooping: false,
@@ -1510,9 +1857,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               if (kDebugMode) {
                 print('❌ Error initializing YouTube video: $error');
               }
-              if (mounted) {
-                setState(() => _isVideoLoading = false);
-              }
+              _setVideoUnavailableState();
             });
         } else {
           // Direct video URL from server - use pod_player with network
@@ -1523,12 +1868,20 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         }
       } else if (videoId.isNotEmpty) {
         // Fallback to YouTube ID
-        if (kDebugMode) {
-          print('📺 Using YouTube ID fallback: $videoId');
+        final youtubeSource = _buildYoutubeSourceFromIdOrUrl(videoId);
+        if (youtubeSource == null) {
+          if (kDebugMode) {
+            print(
+                '⚠️ Invalid YouTube ID/URL in lesson data. Showing no-video state.');
+          }
+          _setVideoUnavailableState();
+          return;
         }
-        final youtubeUrl = 'https://www.youtube.com/watch?v=$videoId';
+        if (kDebugMode) {
+          print('📺 Using YouTube fallback source: $youtubeSource');
+        }
         _controller = PodPlayerController(
-          playVideoFrom: PlayVideoFrom.youtube(youtubeUrl),
+          playVideoFrom: PlayVideoFrom.youtube(youtubeSource),
           podPlayerConfig: const PodPlayerConfig(
             autoPlay: false,
             isLooping: false,
@@ -1539,9 +1892,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             if (kDebugMode) {
               print('❌ Error initializing YouTube video by ID: $error');
             }
-            if (mounted) {
-              setState(() => _isVideoLoading = false);
-            }
+            _setVideoUnavailableState();
           });
       } else {
         // No valid video source
@@ -1560,6 +1911,58 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         setState(() => _isVideoLoading = false);
       }
     }
+  }
+
+  String? _buildYoutubeSourceFromIdOrUrl(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty) return null;
+    if (v.contains('youtube.com') || v.contains('youtu.be')) {
+      final extracted = _extractYoutubeIdFromUrl(v);
+      if (extracted == null) return null;
+      return 'https://www.youtube.com/watch?v=$extracted';
+    }
+    final looksLikeYoutubeId = RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(v);
+    if (!looksLikeYoutubeId) return null;
+    return 'https://www.youtube.com/watch?v=$v';
+  }
+
+  String? _extractYoutubeIdFromUrl(String rawUrl) {
+    try {
+      final uri = Uri.parse(rawUrl.trim());
+      final host = uri.host.toLowerCase();
+
+      if (host.contains('youtu.be')) {
+        final id = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : '';
+        if (RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(id)) return id;
+        return null;
+      }
+
+      if (host.contains('youtube.com')) {
+        final v = uri.queryParameters['v'] ?? '';
+        if (RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(v)) return v;
+
+        final segments = uri.pathSegments;
+        if (segments.length >= 2 &&
+            (segments.first == 'embed' || segments.first == 'shorts')) {
+          final id = segments[1];
+          if (RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(id)) return id;
+        }
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  void _setVideoUnavailableState() {
+    if (!mounted) return;
+    setState(() {
+      _controller = null;
+      _webViewController = null;
+      _useWebViewFallback = false;
+      _isVideoLoading = false;
+      _lastLoadedVimeoEmbedUrl = null;
+    });
   }
 
   /// Initialize direct video playback using pod_player
@@ -1876,6 +2279,11 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     function showError(message) {
       loading.textContent = message;
       loading.className = 'loading error';
+      try {
+        if (window.VideoBridge && window.VideoBridge.postMessage) {
+          window.VideoBridge.postMessage('video_error');
+        }
+      } catch (e) {}
     }
     
     // Method 1: Try direct video source first (simplest, may work if server allows)
@@ -1994,6 +2402,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
+      ..addJavaScriptChannel(
+        'VideoBridge',
+        onMessageReceived: (message) {
+          if (message.message == 'video_error') {
+            _setVideoUnavailableState();
+          }
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
@@ -2064,11 +2480,11 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     _isVimeoVideo = false;
     _vimeoId = null;
     _vimeoHash = null;
-    _vimeoOriginalUrl = null;
     WidgetsBinding.instance.removeObserver(this);
     _progressTimer?.cancel();
     _controller?.dispose();
     _audioPlayer?.dispose();
+    _heroImagePageController.dispose();
     // Clean up temporary video file
     if (_tempVideoFile != null) {
       try {
@@ -2151,7 +2567,20 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.white54),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/images/videoNotFound.png',
+                  width: 180,
+                  height: 120,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.ondemand_video_rounded,
+                    size: 64,
+                    color: Colors.white54,
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
               Text(
                 l10n.noLesson,
@@ -2296,7 +2725,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Text(
-          'يُعرض الوصف في أعلى الشاشة.',
+          AppLocalizations.of(context)!.lessonDescriptionShownTop,
           style: GoogleFonts.cairo(
             fontSize: 13,
             color: AppColors.mutedForeground,
@@ -2332,21 +2761,191 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 
   Widget _buildHeroImages(Map<String, dynamic> lesson, List<String> imageUrls) {
+    final totalImages = imageUrls.length;
+    final currentIndex = totalImages == 0
+        ? 0
+        : _heroImageIndex.clamp(0, totalImages - 1).toInt();
+    final canGoPrev = currentIndex > 0;
+    final canGoNext = totalImages > 1 && currentIndex < totalImages - 1;
+
+    void animateToImage(int index) {
+      if (!_heroImagePageController.hasClients) return;
+      _heroImagePageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
     return Container(
       color: Colors.black,
       child: Column(
         children: [
-          _buildHeroTopBar(lesson),
+          _buildHeroTopBar(
+            lesson,
+            trailing: [
+              if (totalImages > 0)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${currentIndex + 1} / $totalImages',
+                    style: GoogleFonts.cairo(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           SizedBox(
             height: 220,
-            child: Container(
-              color: const Color(0xFFF8F9FC),
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: _buildImagesSection(imageUrls, forAccordion: true),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Container(color: const Color(0xFFF8F9FC)),
+                PageView.builder(
+                  key: ValueKey(totalImages),
+                  controller: _heroImagePageController,
+                  itemCount: totalImages,
+                  physics: const BouncingScrollPhysics(),
+                  onPageChanged: (index) {
+                    if (!mounted) return;
+                    setState(() => _heroImageIndex = index);
+                  },
+                  itemBuilder: (context, index) {
+                    final imageUrl = imageUrls[index];
+                    return GestureDetector(
+                      onTap: () {
+                        showDialog<void>(
+                          context: context,
+                          builder: (context) => _LessonImagesViewerDialog(
+                            urls: imageUrls,
+                            initialIndex: index,
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 10,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Colors.grey[200],
+                              child: const Icon(
+                                Icons.broken_image_rounded,
+                                color: AppColors.mutedForeground,
+                                size: 28,
+                              ),
+                            ),
+                            loadingBuilder: (context, child, progress) {
+                              if (progress == null) return child;
+                              return Container(
+                                color: Colors.grey[100],
+                                child: const Center(
+                                  child: SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                if (totalImages > 1)
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    bottom: 10,
+                    child: Row(
+                      children: [
+                        _buildHeroImageNavButton(
+                          icon: Icons.chevron_left_rounded,
+                          enabled: canGoPrev,
+                          onTap: canGoPrev
+                              ? () => animateToImage(currentIndex - 1)
+                              : null,
+                        ),
+                        const Spacer(),
+                        Expanded(
+                          flex: 6,
+                          child: Center(
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: List.generate(totalImages, (i) {
+                                final active = i == currentIndex;
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  width: active ? 18 : 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: active
+                                        ? Colors.white
+                                        : Colors.white.withValues(alpha: 0.45),
+                                    borderRadius: BorderRadius.circular(99),
+                                  ),
+                                );
+                              }),
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        _buildHeroImageNavButton(
+                          icon: Icons.chevron_right_rounded,
+                          enabled: canGoNext,
+                          onTap: canGoNext
+                              ? () => animateToImage(currentIndex + 1)
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildHeroImageNavButton({
+    required IconData icon,
+    required bool enabled,
+    required VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.black.withValues(alpha: enabled ? 0.42 : 0.22),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: SizedBox(
+          width: 34,
+          height: 34,
+          child: Icon(
+            icon,
+            color: enabled ? Colors.white : Colors.white54,
+            size: 22,
+          ),
+        ),
       ),
     );
   }
@@ -2430,11 +3029,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (_isAudioLesson) return _buildAudioPlayer();
 
     if (_isVimeoVideo && _vimeoId != null) {
+      final embedUrl = _buildVimeoEmbedUrl();
       final html = '''
 <!DOCTYPE html>
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <script src="https://player.vimeo.com/api/player.js"></script>
   <style>
     html, body {
       margin: 0;
@@ -2443,6 +3044,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       height: 100%;
       overflow: hidden;
       background: #000;
+      position: relative;
     }
     iframe {
       position: fixed;
@@ -2451,23 +3053,94 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       height: 100vh;
       border: 0;
       display: block;
+      pointer-events: auto;
+    }
+    .menu-hit-blocker-left,
+    .vimeo-top-actions-hit-blocker {
+      position: fixed;
+      z-index: 3;
+      background: transparent;
+      pointer-events: auto;
+    }
+    .menu-hit-blocker-left {
+      top: 0;
+      height: 64px;
+    }
+    .menu-hit-blocker-left {
+      left: 0;
+      width: 88px;
+    }
+    .vimeo-top-actions-hit-blocker {
+      top: 0;
+      right: 0;
+      width: 170px;
+      height: 88px;
     }
   </style>
 </head>
 <body>
   <iframe
-    src="${_buildVimeoEmbedUrl()}"
-    allow="autoplay; fullscreen"
-    allowfullscreen>
+    id="vimeoPlayer"
+    src="$embedUrl"
+    allow="autoplay">
   </iframe>
+  <div class="menu-hit-blocker-left"></div>
+  <div class="vimeo-top-actions-hit-blocker"></div>
+  <script>
+    const iframe = document.getElementById('vimeoPlayer');
+    const player = new Vimeo.Player(iframe);
+    window.vimeoLastTime = ${_vimeoLastPositionSeconds};
+    player.on('timeupdate', function (data) {
+      try {
+        const sec = Math.max(0, Math.floor((data && data.seconds) || 0));
+        window.vimeoLastTime = sec;
+      } catch (_) {}
+    });
+    window.vimeoGetCurrentTime = async function () {
+      try {
+        const sec = await player.getCurrentTime();
+        window.vimeoLastTime = Math.max(0, Math.floor(sec || 0));
+        return window.vimeoLastTime;
+      } catch (_) {
+        return window.vimeoLastTime ?? -1;
+      }
+    };
+    window.vimeoSeekTo = async function (sec) {
+      try {
+        const target = Number(sec || 0);
+        await player.setCurrentTime(target);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+  </script>
 </body>
 </html>
 ''';
 
-      _webViewController ??= WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.black);
-      _webViewController!.loadHtmlString(html);
+      if (_webViewController == null) {
+        _webViewController = WebViewController()
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..setBackgroundColor(Colors.black)
+          ..setNavigationDelegate(
+            NavigationDelegate(
+              onNavigationRequest: (request) {
+                if (_allowEmbeddedVimeoTopLevelNavigation(request.url)) {
+                  return NavigationDecision.navigate;
+                }
+                if (kDebugMode) {
+                  print('🔒 Blocked Vimeo top-level navigation: ${request.url}');
+                }
+                return NavigationDecision.prevent;
+              },
+            ),
+          );
+      }
+      if (_lastLoadedVimeoEmbedUrl != embedUrl) {
+        _webViewController!.loadHtmlString(html);
+        _lastLoadedVimeoEmbedUrl = embedUrl;
+      }
     }
 
     return Container(
@@ -2557,13 +3230,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                         color: Colors.white, size: 24),
                     onPressed: _openVideoFullscreen,
                   ),
-                if (!_isVideoLoading && _isVimeoVideo && _vimeoId != null)
-                  IconButton(
-                    icon: const Icon(Icons.open_in_new_rounded,
-                        color: Colors.white, size: 22),
-                    tooltip: 'Open Vimeo',
-                    onPressed: _openCurrentVimeoExternally,
-                  ),
               ],
             ),
           ),
@@ -2600,29 +3266,80 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                             : _useWebViewFallback && _webViewController != null
                                 ? WebViewWidget(controller: _webViewController!)
                                 : Container(
-                                    color: Colors.black,
-                                    child: Center(
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          const Icon(Icons.error_outline,
-                                              color: Colors.white54, size: 48),
-                                          const SizedBox(height: 12),
-                                          Text(
-                                            AppLocalizations.of(context)!
-                                                .cannotLoadVideo,
-                                            style: GoogleFonts.cairo(
-                                              color: Colors.white54,
-                                              fontSize: 14,
+                                        color: Colors.black,
+                                        child: Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            Image.asset(
+                                              'assets/images/videoNotFound.png',
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) =>
+                                                  Container(
+                                                color: Colors.black,
+                                                alignment: Alignment.center,
+                                                child: const Icon(
+                                                  Icons.ondemand_video_rounded,
+                                                  color: Colors.white70,
+                                                  size: 34,
+                                                ),
+                                              ),
                                             ),
-                                          ),
-                                        ],
+                                            Container(
+                                              decoration: BoxDecoration(
+                                                gradient: LinearGradient(
+                                                  begin: Alignment.topCenter,
+                                                  end: Alignment.bottomCenter,
+                                                  colors: [
+                                                    Colors.black.withValues(
+                                                        alpha: 0.08),
+                                                    Colors.black.withValues(
+                                                        alpha: 0.45),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                            Align(
+                                              alignment: Alignment.bottomCenter,
+                                              child: Padding(
+                                                padding: const EdgeInsets.only(
+                                                    bottom: 14),
+                                                child: Text(
+                                                  AppLocalizations.of(context)!
+                                                      .noVideoUrlToDownload,
+                                                  style: GoogleFonts.cairo(
+                                                    color: Colors.white,
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                  textAlign: TextAlign.center,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                  ),
                 if (_controller == null)
                   IgnorePointer(child: _buildVideoWatermarkOverlay()),
+                if (!_isVideoLoading &&
+                    _isVimeoVideo &&
+                    _vimeoId != null &&
+                    _webViewController != null)
+                  Positioned(
+                    right: 10,
+                    bottom: 10,
+                    child: Material(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(24),
+                      child: IconButton(
+                        tooltip: 'Fullscreen',
+                        icon: const Icon(
+                          Icons.fullscreen_rounded,
+                          color: Colors.white,
+                        ),
+                        onPressed: _openVideoFullscreen,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -2815,19 +3532,25 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (_isVimeoVideo && _vimeoId != null && mounted) {
       setState(() => _isVimeoFullscreenActive = true);
       try {
+        final startAtSeconds = await _readVimeoCurrentSeconds();
+        _vimeoLastPositionSeconds = startAtSeconds;
         await SystemChrome.setPreferredOrientations(const [
           DeviceOrientation.landscapeLeft,
           DeviceOrientation.landscapeRight,
         ]);
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-        await Navigator.of(context).push(
-          MaterialPageRoute<void>(
+        final returnedSeconds = await Navigator.of(context).push<int>(
+          MaterialPageRoute<int>(
             builder: (_) => _VimeoFullscreenScreen(
-              embedUrl: _buildVimeoEmbedUrl(),
+              embedUrl: _buildVimeoEmbedUrl(startAtSeconds: startAtSeconds),
+              startAtSeconds: startAtSeconds,
             ),
           ),
         );
+        final resumeAt = (returnedSeconds ?? startAtSeconds).clamp(0, 1 << 30);
+        _vimeoLastPositionSeconds = resumeAt;
+        await _seekVimeoToSeconds(resumeAt);
       } finally {
         await SystemChrome.setPreferredOrientations(const [
           DeviceOrientation.portraitUp,
@@ -2974,7 +3697,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: Text(
-                        'جاري تحميل مدة الصوت…',
+                        AppLocalizations.of(context)!.loadingAudioDuration,
                         style: GoogleFonts.cairo(
                           fontSize: 12,
                           color: AppColors.mutedForeground,
@@ -3139,7 +3862,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               ),
               const SizedBox(width: 12),
               Text(
-                'ملفات صوتية',
+                AppLocalizations.of(context)!.audioFiles,
                 style: GoogleFonts.cairo(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -3268,7 +3991,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    'مقطع صوتي ${index + 1}',
+                    AppLocalizations.of(context)!.audioClipLabel(index + 1),
                     style: GoogleFonts.cairo(
                         fontSize: 11, color: AppColors.mutedForeground),
                   ),
@@ -3292,7 +4015,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Text(
-          'اضغط لعرض الفيديو في أعلى الشاشة.',
+          AppLocalizations.of(context)!.tapToShowVideoTop,
           style: GoogleFonts.cairo(
             fontSize: 13,
             color: AppColors.mutedForeground,
@@ -3350,7 +4073,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               ),
               const SizedBox(width: 12),
               Text(
-                'ملفات الفيديو',
+                AppLocalizations.of(context)!.videoFiles,
                 style: GoogleFonts.cairo(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -3431,7 +4154,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    'فيديو ${index + 1}',
+                    AppLocalizations.of(context)!.videoLabel(index + 1),
                     style: GoogleFonts.cairo(
                         fontSize: 11, color: AppColors.mutedForeground),
                   ),
@@ -3446,7 +4169,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'يعمل الآن',
+                  AppLocalizations.of(context)!.nowPlaying,
                   style: GoogleFonts.cairo(
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
@@ -3504,7 +4227,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               ),
               const SizedBox(width: 12),
               Text(
-                'ملفات PDF',
+                AppLocalizations.of(context)!.pdfFiles,
                 style: GoogleFonts.cairo(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -3542,6 +4265,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final isActive =
         _activePdfUrl == url && _activeHeroPanel() == _lessonPanelPdfs;
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {
         _pauseMainVideoPlayback();
         unawaited(_pauseLessonAudioPlayback());
@@ -3551,6 +4275,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _activePdfUrl = url;
           _isPdfLoading = true;
         });
+        final normalizedPdfUrl = googleDriveDirectDownloadUrl(url) ?? url;
+        context.push(
+          RouteNames.pdfViewer,
+          extra: {
+            'pdfUrl': normalizedPdfUrl,
+            'title': name,
+          },
+        );
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
@@ -3595,7 +4327,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    'ملف PDF ${index + 1}',
+                    AppLocalizations.of(context)!.pdfFileLabel(index + 1),
                     style: GoogleFonts.cairo(
                         fontSize: 11, color: AppColors.mutedForeground),
                   ),
@@ -3807,7 +4539,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             if (imageUrls.isNotEmpty)
               _lessonAccordionCard(
                 panelId: _lessonPanelImages,
-                title: 'صور الدرس',
+                title: AppLocalizations.of(context)!.lessonImages,
                 icon: Icons.image_rounded,
                 accent: Colors.blue,
                 badge: imageUrls.length,
@@ -3815,7 +4547,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     ? Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         child: Text(
-                          'يُعرض معرض الصور في أعلى الشاشة.',
+                          AppLocalizations.of(context)!.imageGalleryShownTop,
                           style: GoogleFonts.cairo(
                             fontSize: 13,
                             color: AppColors.mutedForeground,
@@ -3829,16 +4561,24 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             if (_shouldShowLessonAudioPanel())
               _lessonAccordionCard(
                 panelId: _lessonPanelAudio,
-                title: 'ملفات صوتية',
+                title: AppLocalizations.of(context)!.audioFiles,
                 icon: Icons.headphones_rounded,
                 accent: Colors.deepPurple,
                 badge: _allAudioUrls.length,
                 child: _buildAudioFilesSection(forAccordion: true),
               ),
+            _lessonAccordionCard(
+              panelId: _lessonPanelExams,
+              title: AppLocalizations.of(context)!.exams,
+              icon: Icons.quiz_rounded,
+              accent: const Color(0xFF0C52B3),
+              badge: _lessonExams.isEmpty ? null : _lessonExams.length,
+              child: _buildLessonExamsSection(),
+            ),
             if (_hasAnyVideoSource() || _allVideoUrls.isNotEmpty)
               _lessonAccordionCard(
                 panelId: _lessonPanelVideos,
-                title: 'ملفات الفيديو',
+                title: AppLocalizations.of(context)!.videoFiles,
                 icon: Icons.video_library_rounded,
                 accent: Colors.red,
                 badge: _allVideoUrls.isNotEmpty ? _allVideoUrls.length : null,
@@ -3847,7 +4587,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             if (pdfUrls.isNotEmpty)
               _lessonAccordionCard(
                 panelId: _lessonPanelPdfs,
-                title: 'ملفات PDF',
+                title: AppLocalizations.of(context)!.pdfFiles,
                 icon: Icons.picture_as_pdf_rounded,
                 accent: Colors.orange,
                 badge: pdfUrls.length,
@@ -3862,7 +4602,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                   ? Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Text(
-                        'يُعرض التحميل للمشاهدة دون اتصال في أعلى الشاشة.',
+                        AppLocalizations.of(context)!.downloadShownTop,
                         style: GoogleFonts.cairo(
                           fontSize: 13,
                           color: AppColors.mutedForeground,
@@ -3891,7 +4631,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                       ? Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: Text(
-                            'يُعرض ملفات الدرس في أعلى الشاشة.',
+                            AppLocalizations.of(context)!.lessonFilesShownTop,
                             style: GoogleFonts.cairo(
                               fontSize: 13,
                               color: AppColors.mutedForeground,
@@ -4279,9 +5019,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   Widget _buildResourceItem(
       String title, String size, IconData icon, String url) {
     // Check if the resource is a PDF
-    final isPdf = url.toLowerCase().contains('.pdf') ||
-        title.toLowerCase().contains('pdf') ||
-        icon == Icons.picture_as_pdf;
+    final isPdf = resourceLooksLikePdf(url, title) || icon == Icons.picture_as_pdf;
+    final isDrive = isGoogleDriveUrl(url);
     final lowerUrl = url.toLowerCase();
     final isImage = lowerUrl.endsWith('.png') ||
         lowerUrl.endsWith('.jpg') ||
@@ -4291,18 +5030,30 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         icon == Icons.image;
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: url.isNotEmpty
-          ? () {
+          ? () async {
               if (kDebugMode) {
                 print('Opening resource: $url');
               }
 
               if (isPdf) {
                 // Open PDF in viewer screen
+                final normalizedPdfUrl = googleDriveDirectDownloadUrl(url) ?? url;
                 context.push(
                   RouteNames.pdfViewer,
                   extra: {
-                    'pdfUrl': url,
+                    'pdfUrl': normalizedPdfUrl,
+                    'title': title,
+                  },
+                );
+              } else if (isDrive) {
+                final embeddedUrl =
+                    googleDriveFilePreviewUrl(url) ?? googleDriveFolderEmbedUrl(url) ?? url;
+                context.push(
+                  RouteNames.embedWebViewer,
+                  extra: {
+                    'url': embeddedUrl,
                     'title': title,
                   },
                 );
@@ -4324,7 +5075,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                                   child: Padding(
                                     padding: const EdgeInsets.all(24.0),
                                     child: Text(
-                                      'تعذر تحميل الصورة',
+                                      AppLocalizations.of(context)!
+                                          .imageLoadFailed,
                                       style: GoogleFonts.cairo(
                                         color: Colors.white,
                                         fontSize: 14,
@@ -4351,9 +5103,22 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                   ),
                 );
               } else {
-                // For non-PDF files, you can implement download or other actions
-                if (kDebugMode) {
-                  print('Non-PDF file: $url');
+                final uri = Uri.tryParse(url);
+                if (uri == null) return;
+                final opened = await launchUrl(
+                  uri,
+                  mode: LaunchMode.externalApplication,
+                );
+                if (!opened && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        AppLocalizations.of(context)!.cannotLoadThisVideo,
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               }
             }
@@ -4436,7 +5201,11 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
-                isPdf ? Icons.preview_rounded : Icons.download_rounded,
+                isPdf
+                    ? Icons.preview_rounded
+                    : (isDrive
+                        ? Icons.open_in_new_rounded
+                        : Icons.download_rounded),
                 color: AppColors.purple,
                 size: 18,
               ),
@@ -4493,10 +5262,116 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 }
 
+class _LessonImagesViewerDialog extends StatefulWidget {
+  final List<String> urls;
+  final int initialIndex;
+
+  const _LessonImagesViewerDialog({
+    required this.urls,
+    required this.initialIndex,
+  });
+
+  @override
+  State<_LessonImagesViewerDialog> createState() =>
+      _LessonImagesViewerDialogState();
+}
+
+class _LessonImagesViewerDialogState extends State<_LessonImagesViewerDialog> {
+  late final PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, widget.urls.length - 1);
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: PageView.builder(
+                controller: _pageController,
+                physics: const BouncingScrollPhysics(),
+                onPageChanged: (index) => setState(() => _currentIndex = index),
+                itemCount: widget.urls.length,
+                itemBuilder: (context, index) {
+                  final url = widget.urls[index];
+                  return InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 4,
+                    child: Center(
+                      child: Image.network(
+                        url,
+                        fit: BoxFit.contain,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (_, __, ___) => Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            AppLocalizations.of(context)!.imageLoadFailed,
+                            style: GoogleFonts.cairo(
+                              color: Colors.white,
+                              fontSize: 14,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded, color: Colors.white),
+              ),
+            ),
+            if (widget.urls.length > 1)
+              Positioned(
+                bottom: 12,
+                left: 0,
+                right: 0,
+                child: Text(
+                  '${_currentIndex + 1} / ${widget.urls.length}',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.cairo(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _VimeoFullscreenScreen extends StatefulWidget {
   final String embedUrl;
+  final int startAtSeconds;
 
-  const _VimeoFullscreenScreen({required this.embedUrl});
+  const _VimeoFullscreenScreen({
+    required this.embedUrl,
+    required this.startAtSeconds,
+  });
 
   @override
   State<_VimeoFullscreenScreen> createState() => _VimeoFullscreenScreenState();
@@ -4504,6 +5379,42 @@ class _VimeoFullscreenScreen extends StatefulWidget {
 
 class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
   late final WebViewController _controller;
+
+  Future<int> _readCurrentSeconds() async {
+    int? parsedFromRaw(dynamic value) {
+      final raw = '$value'.replaceAll('"', '').trim();
+      final asDouble = double.tryParse(raw);
+      if (asDouble != null && asDouble >= 0) return asDouble.floor();
+      return null;
+    }
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        final result = await _controller.runJavaScriptReturningResult(
+            'window.vimeoGetCurrentTimeFs ? window.vimeoGetCurrentTimeFs() : (window.vimeoLastTimeFs ?? -1);');
+        final parsed = parsedFromRaw(result);
+        if (parsed != null) return parsed;
+      } catch (_) {}
+
+      try {
+        final fallback = await _controller
+            .runJavaScriptReturningResult('window.vimeoLastTimeFs ?? -1;');
+        final parsed = parsedFromRaw(fallback);
+        if (parsed != null) return parsed;
+      } catch (_) {}
+
+      if (attempt < 2) {
+        await Future.delayed(const Duration(milliseconds: 120));
+      }
+    }
+    return widget.startAtSeconds;
+  }
+
+  Future<void> _closeWithCurrentTime() async {
+    final sec = await _readCurrentSeconds();
+    if (!mounted) return;
+    Navigator.of(context).pop(sec);
+  }
 
   @override
   void initState() {
@@ -4513,6 +5424,7 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <script src="https://player.vimeo.com/api/player.js"></script>
   <style>
     html, body {
       margin: 0;
@@ -4521,6 +5433,7 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
       height: 100%;
       overflow: hidden;
       background: #000;
+      position: relative;
     }
     iframe {
       position: fixed;
@@ -4529,15 +5442,67 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
       height: 100vh;
       border: 0;
       display: block;
+      pointer-events: auto;
+    }
+    .menu-hit-blocker-left,
+    .vimeo-top-actions-hit-blocker {
+      position: fixed;
+      z-index: 3;
+      background: transparent;
+      pointer-events: auto;
+    }
+    .menu-hit-blocker-left {
+      top: 0;
+      height: 64px;
+    }
+    .menu-hit-blocker-left {
+      left: 0;
+      width: 88px;
+    }
+    .vimeo-top-actions-hit-blocker {
+      top: 0;
+      right: 0;
+      width: 170px;
+      height: 88px;
     }
   </style>
 </head>
 <body>
   <iframe
+    id="vimeoPlayerFs"
     src="${widget.embedUrl}"
-    allow="autoplay; fullscreen"
-    allowfullscreen>
+    allow="autoplay">
   </iframe>
+  <div class="menu-hit-blocker-left"></div>
+  <div class="vimeo-top-actions-hit-blocker"></div>
+  <script>
+    const iframe = document.getElementById('vimeoPlayerFs');
+    const player = new Vimeo.Player(iframe);
+    const startAt = ${widget.startAtSeconds};
+    window.vimeoLastTimeFs = startAt;
+    player.ready().then(async () => {
+      try {
+        if (startAt > 0) {
+          await player.setCurrentTime(startAt);
+        }
+      } catch (_) {}
+    });
+    player.on('timeupdate', function (data) {
+      try {
+        const sec = Math.max(0, Math.floor((data && data.seconds) || 0));
+        window.vimeoLastTimeFs = sec;
+      } catch (_) {}
+    });
+    window.vimeoGetCurrentTimeFs = async function () {
+      try {
+        const sec = await player.getCurrentTime();
+        window.vimeoLastTimeFs = Math.max(0, Math.floor(sec || 0));
+        return window.vimeoLastTimeFs;
+      } catch (_) {
+        return window.vimeoLastTimeFs ?? -1;
+      }
+    };
+  </script>
 </body>
 </html>
 ''';
@@ -4545,6 +5510,19 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            if (_allowEmbeddedVimeoTopLevelNavigation(request.url)) {
+              return NavigationDecision.navigate;
+            }
+            if (kDebugMode) {
+              print('🔒 Blocked Vimeo fullscreen navigation: ${request.url}');
+            }
+            return NavigationDecision.prevent;
+          },
+        ),
+      )
       ..loadHtmlString(html);
 
     // Force landscape immersive mode for true video fullscreen.
@@ -4567,27 +5545,33 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: WebViewWidget(controller: _controller),
-          ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 8,
-            right: 12,
-            child: Material(
-              color: Colors.black.withValues(alpha: 0.45),
-              borderRadius: BorderRadius.circular(24),
-              child: IconButton(
-                icon: const Icon(Icons.fullscreen_exit_rounded,
-                    color: Colors.white),
-                onPressed: () => Navigator.of(context).pop(),
+    return WillPopScope(
+      onWillPop: () async {
+        await _closeWithCurrentTime();
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: WebViewWidget(controller: _controller),
+            ),
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 12,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(24),
+                child: IconButton(
+                  icon: const Icon(Icons.fullscreen_exit_rounded,
+                      color: Colors.white),
+                  onPressed: _closeWithCurrentTime,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

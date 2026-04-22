@@ -21,6 +21,14 @@ class CoursesScreen extends StatefulWidget {
 class _CoursesScreenState extends State<CoursesScreen> {
   String? _activeSubject;
 
+  Future<void> _refreshCoursesScreen() async {
+    // This screen is currently static/mock-driven; keep pull-to-refresh behavior
+    // so it is ready when API-backed data is connected.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
+    setState(() {});
+  }
+
   List<Map<String, String>> get _subjects {
     final l10n = AppLocalizations.of(context)!;
     return [
@@ -291,11 +299,17 @@ class _CoursesScreenState extends State<CoursesScreen> {
                   Expanded(
                     child: Transform.translate(
                       offset: const Offset(0, -16), // -mt-4 = -16px
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 16), // px-4
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+                      child: RefreshIndicator(
+                        onRefresh: _refreshCoursesScreen,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 16), // px-4
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                             // Subject chips - matches React: gap-3 pb-4 my-6
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 24), // my-6
@@ -358,8 +372,9 @@ class _CoursesScreenState extends State<CoursesScreen> {
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 120), // Space for bottom nav
-                          ],
+                              const SizedBox(height: 120), // Space for bottom nav
+                            ],
+                          ),
                         ),
                       ),
                     ),

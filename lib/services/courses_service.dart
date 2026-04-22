@@ -50,6 +50,16 @@ class CoursesService {
       processedCourse['is_in_wishlist'] = processedCourse['is_wishlisted'];
     }
 
+    // List payloads sometimes omit `id` but include `uuid` / `course_id`.
+    final idStr = processedCourse['id']?.toString().trim();
+    if (idStr == null || idStr.isEmpty) {
+      final alt = processedCourse['uuid']?.toString().trim() ??
+          processedCourse['course_id']?.toString().trim();
+      if (alt != null && alt.isNotEmpty) {
+        processedCourse['id'] = alt;
+      }
+    }
+
     return processedCourse;
   }
 
@@ -211,23 +221,6 @@ class CoursesService {
                   print('    Full First Course: $firstCourse');
                 }
               }
-            } else if (data is List) {
-              // If data is directly a list
-              print('  Courses Count (direct list): ${data.length}');
-              if (data.isNotEmpty) {
-                final firstCourse = data[0] as Map<String, dynamic>?;
-                if (firstCourse != null) {
-                  print('  📸 First Course Image Fields:');
-                  print('    All Keys: ${firstCourse.keys.toList()}');
-                  print('    thumbnail: ${firstCourse['thumbnail']}');
-                  print('    image: ${firstCourse['image']}');
-                  print('    thumbnail_url: ${firstCourse['thumbnail_url']}');
-                  print('    image_url: ${firstCourse['image_url']}');
-                  print('    cover_image: ${firstCourse['cover_image']}');
-                  print('    cover: ${firstCourse['cover']}');
-                  print('    Full First Course: $firstCourse');
-                }
-              }
             }
           } else if (data is List) {
             print('  Courses Count: ${data.length}');
@@ -271,6 +264,144 @@ class CoursesService {
     } catch (e) {
       rethrow;
     }
+  }
+
+  /// Parses course rows from a [getCourses] response (list root or `data.courses`).
+  List<Map<String, dynamic>> coursesListFromCoursesResponse(
+      Map<String, dynamic> response) {
+    final data = response['data'];
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    if (data is Map<String, dynamic>) {
+      final c = data['courses'];
+      if (c is List) {
+        return c
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    }
+    return [];
+  }
+
+  int? _parsePositiveInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v > 0 ? v : null;
+    if (v is num) {
+      final i = v.toInt();
+      return i > 0 ? i : null;
+    }
+    return int.tryParse(v.toString());
+  }
+
+  /// First non-empty identifier across common API shapes (for dedupe / details).
+  String? _courseStableId(Map<String, dynamic> row) {
+    for (final k in ['id', 'uuid', 'course_id']) {
+      final v = row[k]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return null;
+  }
+
+  void _appendCoursesDeduped(
+    List<Map<String, dynamic>> merged,
+    Set<String> seenIds,
+    List<Map<String, dynamic>> batch,
+  ) {
+    for (final row in batch) {
+      final key = _courseStableId(row);
+      if (key != null) {
+        if (seenIds.contains(key)) continue;
+        seenIds.add(key);
+      }
+      merged.add(row);
+    }
+  }
+
+  /// Calls [getCourses] repeatedly until every page is loaded (fixes UI showing
+  /// only the first `per_page` items).
+  Future<Map<String, dynamic>> getCoursesAllPages({
+    int perPage = 50,
+    String? search,
+    String? categoryId,
+    String? subcategoryId,
+    String? instructorId,
+    String price = 'all',
+    String level = 'all',
+    String sort = 'newest',
+    String duration = 'all',
+    int maxPages = 100,
+  }) async {
+    final merged = <Map<String, dynamic>>[];
+    final seenIds = <String>{};
+    var page = 1;
+
+    while (page <= maxPages) {
+      final response = await getCourses(
+        page: page,
+        perPage: perPage,
+        search: search,
+        categoryId: categoryId,
+        subcategoryId: subcategoryId,
+        instructorId: instructorId,
+        price: price,
+        level: level,
+        sort: sort,
+        duration: duration,
+      );
+
+      if (response['success'] != true) {
+        return response;
+      }
+
+      final batch = coursesListFromCoursesResponse(response);
+      _appendCoursesDeduped(merged, seenIds, batch);
+
+      Map<String, dynamic>? meta;
+      final data = response['data'];
+      if (data is Map<String, dynamic>) {
+        final m = data['meta'];
+        if (m is Map) meta = Map<String, dynamic>.from(m);
+      }
+      meta ??= response['meta'] is Map
+          ? Map<String, dynamic>.from(response['meta'] as Map)
+          : null;
+
+      if (batch.isEmpty) break;
+
+      final lastPage = _parsePositiveInt(meta?['last_page']) ??
+          _parsePositiveInt(meta?['lastPage']);
+      final currentPage = _parsePositiveInt(meta?['current_page']) ??
+          _parsePositiveInt(meta?['currentPage']) ??
+          page;
+
+      if (lastPage != null && currentPage >= lastPage) break;
+      // Do not stop on meta.total alone: some backends return an incorrect total
+      // when category_id or other filters are applied, which hid courses (e.g. EEG).
+      if (batch.length < perPage) break;
+
+      page++;
+    }
+
+    final processed = _processCoursesList(merged);
+    final displayTotal = processed.length;
+    return {
+      'success': true,
+      'data': {
+        'courses': processed,
+        'meta': {
+          'total': displayTotal,
+          'per_page': perPage,
+        },
+      },
+      'meta': {
+        'total': displayTotal,
+      },
+    };
   }
 
   /// Get course details
@@ -769,6 +900,80 @@ class CoursesService {
     } catch (e) {
       rethrow;
     }
+  }
+
+  /// Paginates [getCategoryCourses] until the category list is complete. Prefer this
+  /// when the generic `/courses?category_id=` filter misses rows for some categories.
+  Future<Map<String, dynamic>> getCategoryCoursesAllPages(
+    String categoryId, {
+    int perPage = 50,
+    String sort = 'newest',
+    String price = 'all',
+    String level = 'all',
+    String? subcategoryId,
+    int maxPages = 100,
+  }) async {
+    final merged = <Map<String, dynamic>>[];
+    final seenIds = <String>{};
+    var page = 1;
+
+    while (page <= maxPages) {
+      final response = await getCategoryCourses(
+        categoryId,
+        page: page,
+        perPage: perPage,
+        sort: sort,
+        price: price,
+        level: level,
+        subcategoryId: subcategoryId,
+      );
+
+      if (response['success'] != true) {
+        return response;
+      }
+
+      final batch = coursesListFromCoursesResponse(response);
+      _appendCoursesDeduped(merged, seenIds, batch);
+
+      Map<String, dynamic>? meta;
+      final data = response['data'];
+      if (data is Map<String, dynamic>) {
+        final m = data['meta'];
+        if (m is Map) meta = Map<String, dynamic>.from(m);
+      }
+      meta ??= response['meta'] is Map
+          ? Map<String, dynamic>.from(response['meta'] as Map)
+          : null;
+
+      if (batch.isEmpty) break;
+
+      final lastPage = _parsePositiveInt(meta?['last_page']) ??
+          _parsePositiveInt(meta?['lastPage']);
+      final currentPage = _parsePositiveInt(meta?['current_page']) ??
+          _parsePositiveInt(meta?['currentPage']) ??
+          page;
+
+      if (lastPage != null && currentPage >= lastPage) break;
+      if (batch.length < perPage) break;
+
+      page++;
+    }
+
+    final processed = _processCoursesList(merged);
+    final displayTotal = processed.length;
+    return {
+      'success': true,
+      'data': {
+        'courses': processed,
+        'meta': {
+          'total': displayTotal,
+          'per_page': perPage,
+        },
+      },
+      'meta': {
+        'total': displayTotal,
+      },
+    };
   }
 
   /// Enroll in a course

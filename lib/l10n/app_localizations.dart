@@ -2780,6 +2780,96 @@ abstract class AppLocalizations {
   /// **'Lesson files'**
   String get lessonFiles;
 
+  /// Lesson images section title
+  ///
+  /// In en, this message translates to:
+  /// **'Lesson images'**
+  String get lessonImages;
+
+  /// Audio files section title
+  ///
+  /// In en, this message translates to:
+  /// **'Audio files'**
+  String get audioFiles;
+
+  /// Video files section title
+  ///
+  /// In en, this message translates to:
+  /// **'Video files'**
+  String get videoFiles;
+
+  /// PDF files section title
+  ///
+  /// In en, this message translates to:
+  /// **'PDF files'**
+  String get pdfFiles;
+
+  /// Error when image cannot load
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to load image'**
+  String get imageLoadFailed;
+
+  /// Hint when description appears in hero area
+  ///
+  /// In en, this message translates to:
+  /// **'Description is shown above.'**
+  String get lessonDescriptionShownTop;
+
+  /// Hint when image gallery appears in hero area
+  ///
+  /// In en, this message translates to:
+  /// **'Image gallery is shown above.'**
+  String get imageGalleryShownTop;
+
+  /// Hint when download panel appears in hero area
+  ///
+  /// In en, this message translates to:
+  /// **'Offline download panel is shown above.'**
+  String get downloadShownTop;
+
+  /// Hint when lesson files panel appears in hero area
+  ///
+  /// In en, this message translates to:
+  /// **'Lesson files are shown above.'**
+  String get lessonFilesShownTop;
+
+  /// Hint when no hero video is selected
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to show the video above.'**
+  String get tapToShowVideoTop;
+
+  /// Helper text while loading audio duration
+  ///
+  /// In en, this message translates to:
+  /// **'Loading audio duration...'**
+  String get loadingAudioDuration;
+
+  /// Audio clip label with index
+  ///
+  /// In en, this message translates to:
+  /// **'Audio clip {index}'**
+  String audioClipLabel(int index);
+
+  /// Video label with index
+  ///
+  /// In en, this message translates to:
+  /// **'Video {index}'**
+  String videoLabel(int index);
+
+  /// PDF file label with index
+  ///
+  /// In en, this message translates to:
+  /// **'PDF file {index}'**
+  String pdfFileLabel(int index);
+
+  /// Badge text for currently playing item
+  ///
+  /// In en, this message translates to:
+  /// **'Now playing'**
+  String get nowPlaying;
+
   /// No files available
   ///
   /// In en, this message translates to:

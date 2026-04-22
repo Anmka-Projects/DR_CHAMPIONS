@@ -2193,6 +2193,81 @@
   "@lessonFiles": {
     "description": "ملفات الدرس"
   },
+  "lessonImages": "صور الدرس",
+  "@lessonImages": {
+    "description": "عنوان قسم صور الدرس"
+  },
+  "audioFiles": "ملفات صوتية",
+  "@audioFiles": {
+    "description": "عنوان قسم الملفات الصوتية"
+  },
+  "videoFiles": "ملفات الفيديو",
+  "@videoFiles": {
+    "description": "عنوان قسم ملفات الفيديو"
+  },
+  "pdfFiles": "ملفات PDF",
+  "@pdfFiles": {
+    "description": "عنوان قسم ملفات PDF"
+  },
+  "imageLoadFailed": "تعذر تحميل الصورة",
+  "@imageLoadFailed": {
+    "description": "رسالة فشل تحميل الصورة"
+  },
+  "lessonDescriptionShownTop": "يُعرض الوصف في أعلى الشاشة.",
+  "@lessonDescriptionShownTop": {
+    "description": "تلميح عرض وصف الدرس في الأعلى"
+  },
+  "imageGalleryShownTop": "يُعرض معرض الصور في أعلى الشاشة.",
+  "@imageGalleryShownTop": {
+    "description": "تلميح عرض معرض الصور في الأعلى"
+  },
+  "downloadShownTop": "يُعرض التحميل للمشاهدة دون اتصال في أعلى الشاشة.",
+  "@downloadShownTop": {
+    "description": "تلميح عرض التحميل في الأعلى"
+  },
+  "lessonFilesShownTop": "يُعرض ملفات الدرس في أعلى الشاشة.",
+  "@lessonFilesShownTop": {
+    "description": "تلميح عرض ملفات الدرس في الأعلى"
+  },
+  "tapToShowVideoTop": "اضغط لعرض الفيديو في أعلى الشاشة.",
+  "@tapToShowVideoTop": {
+    "description": "تلميح عرض الفيديو في الأعلى"
+  },
+  "loadingAudioDuration": "جاري تحميل مدة الصوت...",
+  "@loadingAudioDuration": {
+    "description": "نص أثناء تحميل مدة الصوت"
+  },
+  "audioClipLabel": "مقطع صوتي {index}",
+  "@audioClipLabel": {
+    "description": "عنوان مقطع صوتي مع رقم",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "videoLabel": "فيديو {index}",
+  "@videoLabel": {
+    "description": "عنوان فيديو مع رقم",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "pdfFileLabel": "ملف PDF {index}",
+  "@pdfFileLabel": {
+    "description": "عنوان ملف PDF مع رقم",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "nowPlaying": "يعمل الآن",
+  "@nowPlaying": {
+    "description": "شارة العنصر الذي يعمل حالياً"
+  },
   "noFilesAvailable": "لا توجد ملفات متاحة",
   "@noFilesAvailable": {
     "description": "لا توجد ملفات متاحة"

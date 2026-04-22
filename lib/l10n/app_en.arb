@@ -2193,6 +2193,81 @@
   "@lessonFiles": {
     "description": "Lesson files section title"
   },
+  "lessonImages": "Lesson images",
+  "@lessonImages": {
+    "description": "Lesson images section title"
+  },
+  "audioFiles": "Audio files",
+  "@audioFiles": {
+    "description": "Audio files section title"
+  },
+  "videoFiles": "Video files",
+  "@videoFiles": {
+    "description": "Video files section title"
+  },
+  "pdfFiles": "PDF files",
+  "@pdfFiles": {
+    "description": "PDF files section title"
+  },
+  "imageLoadFailed": "Unable to load image",
+  "@imageLoadFailed": {
+    "description": "Error when image cannot load"
+  },
+  "lessonDescriptionShownTop": "Description is shown above.",
+  "@lessonDescriptionShownTop": {
+    "description": "Hint when description appears in hero area"
+  },
+  "imageGalleryShownTop": "Image gallery is shown above.",
+  "@imageGalleryShownTop": {
+    "description": "Hint when image gallery appears in hero area"
+  },
+  "downloadShownTop": "Offline download panel is shown above.",
+  "@downloadShownTop": {
+    "description": "Hint when download panel appears in hero area"
+  },
+  "lessonFilesShownTop": "Lesson files are shown above.",
+  "@lessonFilesShownTop": {
+    "description": "Hint when lesson files panel appears in hero area"
+  },
+  "tapToShowVideoTop": "Tap to show the video above.",
+  "@tapToShowVideoTop": {
+    "description": "Hint when no hero video is selected"
+  },
+  "loadingAudioDuration": "Loading audio duration...",
+  "@loadingAudioDuration": {
+    "description": "Helper text while loading audio duration"
+  },
+  "audioClipLabel": "Audio clip {index}",
+  "@audioClipLabel": {
+    "description": "Audio clip label with index",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "videoLabel": "Video {index}",
+  "@videoLabel": {
+    "description": "Video label with index",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "pdfFileLabel": "PDF file {index}",
+  "@pdfFileLabel": {
+    "description": "PDF file label with index",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "nowPlaying": "Now playing",
+  "@nowPlaying": {
+    "description": "Badge text for currently playing item"
+  },
   "noFilesAvailable": "No files available",
   "@noFilesAvailable": {
     "description": "No files available"

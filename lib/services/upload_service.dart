@@ -34,6 +34,32 @@ class UploadService {
     }
   }
 
+  /// Upload a question bank file (JSON / Excel / CSV). Uses same `/upload` route
+  /// with `type=question_bank` when the dedicated admin route is unavailable.
+  Future<String> uploadQuestionBankFile(File file) async {
+    try {
+      final response = await ApiClient.instance.postMultipart(
+        ApiEndpoints.upload,
+        fields: const {'type': 'question_bank'},
+        files: {'file': file},
+        requireAuth: true,
+      );
+      final url = response['url']?.toString() ??
+          (response['data'] is Map
+              ? (response['data'] as Map)['url']?.toString()
+              : null);
+      if (url != null && url.isNotEmpty) {
+        return url;
+      }
+      throw Exception(response['message'] ?? 'Upload failed');
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ UploadService.uploadQuestionBankFile: $e');
+      }
+      rethrow;
+    }
+  }
+
   /// Upload a PDF file. Returns URL path for use as fileUrl.
   Future<String> uploadPdf(File file) async {
     try {

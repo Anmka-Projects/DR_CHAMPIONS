@@ -43,6 +43,7 @@ class RouteNames {
   static const String editProfile = '/edit-profile';
   static const String changePassword = '/change-password';
   static const String pdfViewer = '/pdf-viewer';
+  static const String embedWebViewer = '/embed-web';
   static const String centerAttendance = '/center-attendance';
   static const String teachers = '/teachers';
   static const String teacherDetails = '/teacher-details';

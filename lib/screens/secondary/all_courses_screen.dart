@@ -142,7 +142,11 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
     try {
       setState(() => _isLoading = true);
 
-      String? categoryId = _selectedCategoryId;
+      final String? categoryIdRaw = _selectedCategoryId;
+      final String? categoryId =
+          categoryIdRaw != null && categoryIdRaw.trim().isNotEmpty
+              ? categoryIdRaw.trim()
+              : null;
       String price = _selectedPrice;
 
       // Map sort options to API format
@@ -159,17 +163,58 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
 
       Map<String, dynamic> response;
 
-      // Always use getCourses to support all filters including search
-      response = await CoursesService.instance.getCourses(
-        page: 1,
-        perPage: 50,
-        search: _searchQuery.isNotEmpty ? _searchQuery : null,
-        categoryId: categoryId,
-        price: price,
-        sort: apiSort,
-        level: 'all', // Can be extended later
-        duration: 'all', // Can be extended later
-      );
+      final hasCategory = categoryId != null;
+      final hasSearch = _searchQuery.trim().isNotEmpty;
+
+      // Category-scoped listing: `/categories/{id}/courses` is often more complete
+      // than `/courses?category_id=` (some categories missed rows, e.g. EEG).
+      if (hasCategory && !hasSearch) {
+        final cid = categoryId;
+        try {
+          response = await CoursesService.instance.getCategoryCoursesAllPages(
+            cid,
+            perPage: 50,
+            sort: apiSort,
+            price: price,
+            level: 'all',
+          );
+          if (response['success'] != true) {
+            response = await CoursesService.instance.getCoursesAllPages(
+              perPage: 50,
+              search: null,
+              categoryId: cid,
+              price: price,
+              sort: apiSort,
+              level: 'all',
+              duration: 'all',
+            );
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print(
+                '⚠️ Category courses endpoint failed, falling back to /courses: $e');
+          }
+          response = await CoursesService.instance.getCoursesAllPages(
+            perPage: 50,
+            search: null,
+            categoryId: cid,
+            price: price,
+            sort: apiSort,
+            level: 'all',
+            duration: 'all',
+          );
+        }
+      } else {
+        response = await CoursesService.instance.getCoursesAllPages(
+          perPage: 50,
+          search: _searchQuery.isNotEmpty ? _searchQuery : null,
+          categoryId: categoryId,
+          price: price,
+          sort: apiSort,
+          level: 'all', // Can be extended later
+          duration: 'all', // Can be extended later
+        );
+      }
 
       if (kDebugMode) {
         Object? nestedMetaTotal;
@@ -611,38 +656,52 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
   Widget _buildCourseCard(Map<String, dynamic> course) {
     final priceValue = tryParseCourseNum(course['price']) ?? 0;
     final isFree = courseIsEffectivelyFree(course);
+    final hasPricePlans = courseHasSubscriptionPlans(course);
+    final isAr = Localizations.localeOf(context).languageCode == 'ar';
+    final currencyCode =
+        course['currency']?.toString().toUpperCase() == 'USD' ? 'USD' : 'EGP';
+    final backendFinalPrice = tryParseCourseNum(course['price']);
+    final backendOriginalPrice = tryParseCourseNum(course['original_price']);
+    final backendDiscountPrice = tryParseCourseNum(course['discount_price']);
+    final hasBackendDiscount = backendDiscountPrice != null &&
+        backendOriginalPrice != null &&
+        backendDiscountPrice > 0 &&
+        backendOriginalPrice > backendDiscountPrice;
+    final oldPriceText = hasBackendDiscount
+        ? formatSingleCurrencyPrice(
+            currency: currencyCode,
+            amount: backendOriginalPrice,
+          )
+        : null;
+    final newPriceText = hasBackendDiscount
+        ? formatSingleCurrencyPrice(
+            currency: currencyCode,
+            amount: backendDiscountPrice,
+          )
+        : null;
     final badgeAmount = courseCardDisplayAmount(course) ?? priceValue;
+    final priceBadgeText = isFree
+        ? null
+        : ((backendFinalPrice != null && backendFinalPrice > 0)
+            ? formatSingleCurrencyPrice(
+                currency: currencyCode,
+                amount: backendFinalPrice,
+              )
+            : formatCoursePriceCompact(course)) ??
+            (badgeAmount > 0
+                ? '${badgeAmount.toInt()} ${context.l10n.egyptianPoundShort}'
+                : null);
 
     final thumbnail = course['thumbnail']?.toString() ?? '';
-    final categoryName = course['category'] is Map
-        ? (course['category'] as Map)['name']?.toString() ?? ''
-        : course['category']?.toString() ?? '';
-    final instructorName = course['instructor'] is Map
-        ? (course['instructor'] as Map)['name']?.toString() ?? ''
-        : course['instructor']?.toString() ?? '';
+    final categoryName = courseCategoryEnglishLabel(course['category']);
+    final instructorName = courseDisplayInstructor(course);
+    final courseTitle =
+        courseDisplayTitle(course, fallback: context.l10n.noTitle);
 
-    // Safely parse rating
-    num ratingValue = 0.0;
-    if (course['rating'] != null) {
-      if (course['rating'] is num) {
-        ratingValue = course['rating'] as num;
-      } else if (course['rating'] is String) {
-        ratingValue = num.tryParse(course['rating'] as String) ?? 0.0;
-      }
-    }
-
-    // Safely parse students_count
-    int studentsCountValue = 0;
-    if (course['students_count'] != null) {
-      if (course['students_count'] is int) {
-        studentsCountValue = course['students_count'] as int;
-      } else if (course['students_count'] is num) {
-        studentsCountValue = (course['students_count'] as num).toInt();
-      } else if (course['students_count'] is String) {
-        studentsCountValue =
-            int.tryParse(course['students_count'] as String) ?? 0;
-      }
-    }
+    final ratingValue = courseCardRatingNum(course);
+    final studentsCountValue = courseCardStudentsCount(course);
+    final durationLabel =
+        courseListCardDurationText(course, context.l10n.hoursUnitShort);
 
     return GestureDetector(
       onTap: () {
@@ -751,7 +810,11 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
                     child: Text(
                       isFree
                           ? context.l10n.free
-                          : '${badgeAmount.toInt()} ${context.l10n.egyptianPoundShort}',
+                          : (priceBadgeText ??
+                              context.l10n.notAvailableShort),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
                       style: GoogleFonts.cairo(
                           fontSize: 10,
                           fontWeight: FontWeight.bold,
@@ -759,6 +822,37 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
                     ),
                   ),
                 ),
+                if (hasPricePlans)
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0C52B3).withOpacity(0.92),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.sell_rounded,
+                              size: 11, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(
+                            isAr ? 'يوجد خطط أسعار' : 'Plans available',
+                            style: GoogleFonts.cairo(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
 
@@ -791,7 +885,7 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
                     if (categoryName.isNotEmpty) const SizedBox(height: 6),
                     // Title
                     Text(
-                      course['title']?.toString() ?? context.l10n.noTitle,
+                      courseTitle,
                       style: GoogleFonts.cairo(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
@@ -800,6 +894,30 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
+                    if (hasBackendDiscount) ...[
+                      Row(
+                        children: [
+                          Text(
+                            oldPriceText!,
+                            style: GoogleFonts.cairo(
+                              fontSize: 9,
+                              color: AppColors.mutedForeground,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            newPriceText!,
+                            style: GoogleFonts.cairo(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFFEA580C),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                    ],
                     // Instructor
                     if (instructorName.isNotEmpty)
                       Text(
@@ -810,25 +928,45 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     const Spacer(),
-                    // Stats
+                    // Stats: rating, duration, learners (field names vary by endpoint).
                     Row(
                       children: [
                         const Icon(Icons.star_rounded,
-                            size: 14, color: Colors.amber),
+                            size: 12, color: Colors.amber),
                         const SizedBox(width: 2),
-                        Text(
-                          ratingValue.toStringAsFixed(1),
-                          style: GoogleFonts.cairo(
-                              fontSize: 11, fontWeight: FontWeight.w600),
+                        Flexible(
+                          child: Text(
+                            ratingValue.toStringAsFixed(1),
+                            style: GoogleFonts.cairo(
+                                fontSize: 10, fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        const Spacer(),
-                        Icon(Icons.people_rounded,
-                            size: 12, color: Colors.grey[400]),
+                        const SizedBox(width: 6),
+                        Icon(Icons.access_time_rounded,
+                            size: 11, color: Colors.grey[400]),
                         const SizedBox(width: 2),
-                        Text(
-                          studentsCountValue.toString(),
-                          style: GoogleFonts.cairo(
-                              fontSize: 10, color: AppColors.mutedForeground),
+                        Flexible(
+                          child: Text(
+                            durationLabel,
+                            style: GoogleFonts.cairo(
+                                fontSize: 9,
+                                color: AppColors.mutedForeground),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(Icons.people_rounded,
+                            size: 11, color: Colors.grey[400]),
+                        const SizedBox(width: 2),
+                        Flexible(
+                          child: Text(
+                            studentsCountValue.toString(),
+                            style: GoogleFonts.cairo(
+                                fontSize: 9,
+                                color: AppColors.mutedForeground),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),

@@ -255,13 +255,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Expanded(
                   child: Transform.translate(
                     offset: const Offset(0, -10),
-                    child: _errorMessage != null
-                        ? _buildErrorView()
-                        : SingleChildScrollView(
-                            physics: const BouncingScrollPhysics(),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                    child: RefreshIndicator(
+                      onRefresh: _loadHomeData,
+                      child: _errorMessage != null
+                          ? ListView(
+                              physics: const AlwaysScrollableScrollPhysics(
+                                parent: BouncingScrollPhysics(),
+                              ),
                               children: [
+                                const SizedBox(height: 36),
+                                _buildErrorView(),
+                              ],
+                            )
+                          : SingleChildScrollView(
+                              physics: const AlwaysScrollableScrollPhysics(
+                                parent: BouncingScrollPhysics(),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                 // 3D Banner
                                 if (_isLoading)
                                   _build3DBannerSkeleton()
@@ -370,10 +382,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   _buildRecommendedCourses(),
                                 ],
 
-                                const SizedBox(height: 140),
-                              ],
+                                  const SizedBox(height: 140),
+                                ],
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
               ],
@@ -1979,9 +1992,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          course['category']?['name'] ??
-                              course['category'] ??
-                              '',
+                          courseCategoryEnglishLabel(course['category']),
                           style: GoogleFonts.cairo(
                               fontSize: 10,
                               color: AppColors.purple,
@@ -2009,7 +2020,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    course['title'] ?? '',
+                    courseDisplayTitle(
+                      course,
+                      fallback: AppLocalizations.of(context)!.courseTitle,
+                    ),
                     style: GoogleFonts.cairo(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -2020,7 +2034,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    course['instructor']?['name'] ?? course['instructor'] ?? '',
+                    courseDisplayInstructor(
+                      course,
+                      fallback: AppLocalizations.of(context)!.instructor,
+                    ),
                     style: GoogleFonts.cairo(
                         fontSize: 12, color: AppColors.mutedForeground),
                   ),
@@ -2031,7 +2048,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           size: 16, color: Colors.amber),
                       const SizedBox(width: 4),
                       Text(
-                        '${course['rating'] ?? 0}',
+                        courseCardRatingNum(course).toStringAsFixed(1),
                         style: GoogleFonts.cairo(
                             fontSize: 12, fontWeight: FontWeight.w600),
                       ),
@@ -2040,7 +2057,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           size: 14, color: Colors.grey[400]),
                       const SizedBox(width: 4),
                       Text(
-                        '${course['duration_hours'] ?? course['hours'] ?? 0}${AppLocalizations.of(context)!.hourShort}',
+                        courseListCardDurationText(
+                          course,
+                          AppLocalizations.of(context)!.hoursUnitShort,
+                        ),
                         style: GoogleFonts.cairo(
                             fontSize: 11, color: AppColors.mutedForeground),
                       ),
@@ -2049,7 +2069,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           size: 14, color: Colors.grey[400]),
                       const SizedBox(width: 4),
                       Text(
-                        '${course['students_count'] ?? course['students'] ?? 0}',
+                        '${courseCardStudentsCount(course)}',
                         style: GoogleFonts.cairo(
                             fontSize: 11, color: AppColors.mutedForeground),
                       ),

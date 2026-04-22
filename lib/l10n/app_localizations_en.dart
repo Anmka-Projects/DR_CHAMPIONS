@@ -1556,6 +1556,57 @@ class AppLocalizationsEn extends AppLocalizations {
   String get lessonFiles => 'Lesson files';
 
   @override
+  String get lessonImages => 'Lesson images';
+
+  @override
+  String get audioFiles => 'Audio files';
+
+  @override
+  String get videoFiles => 'Video files';
+
+  @override
+  String get pdfFiles => 'PDF files';
+
+  @override
+  String get imageLoadFailed => 'Unable to load image';
+
+  @override
+  String get lessonDescriptionShownTop => 'Description is shown above.';
+
+  @override
+  String get imageGalleryShownTop => 'Image gallery is shown above.';
+
+  @override
+  String get downloadShownTop => 'Offline download panel is shown above.';
+
+  @override
+  String get lessonFilesShownTop => 'Lesson files are shown above.';
+
+  @override
+  String get tapToShowVideoTop => 'Tap to show the video above.';
+
+  @override
+  String get loadingAudioDuration => 'Loading audio duration...';
+
+  @override
+  String audioClipLabel(int index) {
+    return 'Audio clip $index';
+  }
+
+  @override
+  String videoLabel(int index) {
+    return 'Video $index';
+  }
+
+  @override
+  String pdfFileLabel(int index) {
+    return 'PDF file $index';
+  }
+
+  @override
+  String get nowPlaying => 'Now playing';
+
+  @override
   String get noFilesAvailable => 'No files available';
 
   @override

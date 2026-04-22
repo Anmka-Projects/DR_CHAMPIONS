@@ -135,12 +135,15 @@ class ExamsService {
     }
   }
 
-  /// Get course exams
-  Future<List<Map<String, dynamic>>> getCourseExams(String courseId) async {
+  /// Get course exams (optionally scoped to a lesson via lesson_id query).
+  Future<List<Map<String, dynamic>>> getCourseExams(
+    String courseId, {
+    String? lessonId,
+  }) async {
     try {
       Future<Map<String, dynamic>> fetch({required bool requireAuth}) {
         return ApiClient.instance.get(
-          ApiEndpoints.courseExams(courseId),
+          ApiEndpoints.courseExams(courseId, lessonId: lessonId),
           requireAuth: requireAuth,
         );
       }

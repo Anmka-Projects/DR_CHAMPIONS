@@ -98,9 +98,38 @@ class ApiEndpoints {
     return '$baseUrl/my-exam-results?page=$page&per_page=$perPage$courseFilter';
   }
 
+  /// Question banks (instructor/admin). Backend may implement list/create here
+  /// or only use [upload] with `type=question_bank`; app tries both patterns.
+  static String get adminQuestionBanks => '$baseUrl/admin/question-banks';
+  static String adminCourseQuestionBanks(String courseId) =>
+      '$baseUrl/admin/courses/$courseId/question-banks';
+  
+  // Lesson question bank (student)
+  static String lessonQuestions(String lessonId) =>
+      '$baseUrl/lesson-questions/lessons/$lessonId';
+  static String submitLessonQuestions(String lessonId) =>
+      '$baseUrl/lesson-questions/lessons/$lessonId/submit';
+
+  // Lesson question bank (admin/instructor)
+  static String adminLessonQuestions(String lessonId) =>
+      '$baseUrl/admin/lesson-questions/lessons/$lessonId/questions';
+  static String adminLessonQuestion(String questionId) =>
+      '$baseUrl/admin/lesson-questions/questions/$questionId';
+  static String reorderAdminLessonQuestions(String lessonId) =>
+      '$baseUrl/admin/lesson-questions/lessons/$lessonId/questions/reorder';
+  static String adminLessonQuestionCountsForCourse(String courseId) =>
+      '$baseUrl/admin/lesson-questions/courses/$courseId/counts';
+  static String importAdminLessonQuestionsXlsx(String lessonId) =>
+      '$baseUrl/admin/lesson-questions/lessons/$lessonId/questions/import-xlsx';
+
   // Course Exams
-  static String courseExams(String courseId) =>
-      '$baseUrl/courses/$courseId/exams';
+  static String courseExams(String courseId, {String? lessonId}) {
+    final lessonQuery =
+        (lessonId != null && lessonId.trim().isNotEmpty)
+            ? '?lesson_id=${Uri.encodeQueryComponent(lessonId.trim())}'
+            : '';
+    return '$baseUrl/courses/$courseId/exams$lessonQuery';
+  }
   static String courseExamDetails(String courseId, String examId) =>
       '$baseUrl/courses/$courseId/exams/$examId';
   static String courseExamStart(String courseId, String examId) =>

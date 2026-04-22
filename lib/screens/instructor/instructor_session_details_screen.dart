@@ -9,6 +9,7 @@ import '../../core/design/app_colors.dart';
 import '../../core/design/app_radius.dart';
 import '../../services/teacher_dashboard_service.dart';
 import '../../services/upload_service.dart';
+import '../../widgets/instructor_question_bank_lesson_fields.dart';
 
 /// Instructor – Session (section) details. Display and edit a course section
 /// with its lessons. Uses curriculum API.
@@ -132,6 +133,23 @@ class _InstructorSessionDetailsScreenState
     }
   }
 
+  /// Extra keys for curriculum API (question banks, etc.).
+  Map<String, dynamic>? _extraLessonFields(Map<String, dynamic> result) {
+    final out = <String, dynamic>{};
+    void put(String k, dynamic v) {
+      if (v == null) return;
+      final s = v.toString();
+      if (s.isEmpty) return;
+      out[k] = v;
+    }
+
+    put('question_bank_id', result['question_bank_id']);
+    put('questionBankId', result['questionBankId']);
+    put('question_bank_file_url', result['question_bank_file_url']);
+    put('questionBankUrl', result['questionBankUrl']);
+    return out.isEmpty ? null : out;
+  }
+
   Future<void> _showAddLessonDialog() async {
     final result = await _showLessonFormDialog(null);
     if (result == null || !mounted) return;
@@ -150,6 +168,7 @@ class _InstructorSessionDetailsScreenState
           fileUrl: result['fileUrl']?.toString(),
           isFree: result['isFree'] == true || result['is_free'] == true,
           order: (result['order'] as num?)?.toInt() ?? (_lessons.length + 1),
+          extraFields: _extraLessonFields(result),
         );
         if (mounted) {
           final lessonMap = Map<String, dynamic>.from(created);
@@ -240,12 +259,19 @@ class _InstructorSessionDetailsScreenState
     );
     String type = existing?['type']?.toString() ?? 'video';
     bool isFree = existing?['isFree'] == true || existing?['is_free'] == true;
+    final existingFileUrl = existing?['fileUrl']?.toString();
+    String? qbBankId = existing?['question_bank_id']?.toString() ??
+        existing?['questionBankId']?.toString();
+    String? qbFileUrl = existing?['question_bank_file_url']?.toString() ??
+        existing?['questionBankUrl']?.toString() ??
+        (type == 'question_bank' ? existingFileUrl : null);
 
     final types = [
       ('video', isAr ? 'فيديو' : 'Video'),
       ('text', isAr ? 'نص' : 'Text'),
       ('file', isAr ? 'ملف' : 'File'),
       ('exam', isAr ? 'امتحان' : 'Exam'),
+      ('question_bank', isAr ? 'بنك أسئلة' : 'Question bank'),
     ];
 
     return showDialog<Map<String, dynamic>>(
@@ -395,6 +421,17 @@ class _InstructorSessionDetailsScreenState
                       style: GoogleFonts.cairo(),
                       keyboardType: TextInputType.url,
                     ),
+                  ] else if (type == 'question_bank') ...[
+                    InstructorQuestionBankLessonFields(
+                      courseId: widget.courseId,
+                      isAr: isAr,
+                      initialBankId: qbBankId,
+                      initialFileUrl: qbFileUrl,
+                      onChanged: (id, url) => setModalState(() {
+                        qbBankId = id;
+                        qbFileUrl = url;
+                      }),
+                    ),
                   ],
                   const SizedBox(height: 14),
                   Text(
@@ -468,12 +505,35 @@ class _InstructorSessionDetailsScreenState
                   'videoUrl': videoUrlCtrl.text.trim().isEmpty
                       ? null
                       : videoUrlCtrl.text.trim(),
-                  'fileUrl': fileUrlCtrl.text.trim().isEmpty
-                      ? null
-                      : fileUrlCtrl.text.trim(),
+                  'fileUrl': type == 'question_bank'
+                      ? (qbFileUrl?.trim().isNotEmpty == true
+                          ? qbFileUrl!.trim()
+                          : (fileUrlCtrl.text.trim().isEmpty
+                              ? null
+                              : fileUrlCtrl.text.trim()))
+                      : (fileUrlCtrl.text.trim().isEmpty
+                          ? null
+                          : fileUrlCtrl.text.trim()),
                   'isFree': isFree,
                   'order': existing?['order'] ?? (_lessons.length + 1),
                 };
+                if (type == 'question_bank') {
+                  if (qbBankId != null && qbBankId!.trim().isNotEmpty) {
+                    lesson['question_bank_id'] = qbBankId!.trim();
+                    lesson['questionBankId'] = qbBankId!.trim();
+                  } else {
+                    lesson.remove('question_bank_id');
+                    lesson.remove('questionBankId');
+                  }
+                  if (qbFileUrl != null && qbFileUrl!.trim().isNotEmpty) {
+                    final u = qbFileUrl!.trim();
+                    lesson['question_bank_file_url'] = u;
+                    lesson['questionBankUrl'] = u;
+                  } else {
+                    lesson.remove('question_bank_file_url');
+                    lesson.remove('questionBankUrl');
+                  }
+                }
                 Navigator.pop(ctx, lesson);
               },
               child: Text(
@@ -669,7 +729,9 @@ class _InstructorSessionDetailsScreenState
                         Icon(
                           type == 'video'
                               ? Icons.play_circle_rounded
-                              : Icons.article_rounded,
+                              : type == 'question_bank'
+                                  ? Icons.quiz_rounded
+                                  : Icons.article_rounded,
                           size: 24,
                           color: AppColors.purple,
                         ),

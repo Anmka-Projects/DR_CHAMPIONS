@@ -10,6 +10,7 @@ import '../../core/api/api_endpoints.dart';
 
 import '../../services/teacher_dashboard_service.dart';
 import '../../core/navigation/route_names.dart';
+import '../../widgets/instructor_question_banks_panel.dart';
 
 /// Instructor – Course details (uses GET /api/admin/courses/:id).
 /// Shows course overview, stats, sections, and enrolled students
@@ -680,6 +681,9 @@ class _InstructorCourseDetailsScreenState
         children: [
           if (courseId.isNotEmpty) const SizedBox(height: 20),
           if (courseId.isNotEmpty) _buildAddSectionBlock(courseId, isAr),
+          if (courseId.isNotEmpty) const SizedBox(height: 12),
+          if (courseId.isNotEmpty)
+            InstructorQuestionBanksPanel(courseId: courseId, isAr: isAr),
           if (courseId.isNotEmpty) const SizedBox(height: 12),
           _sections.isEmpty
               ? Center(

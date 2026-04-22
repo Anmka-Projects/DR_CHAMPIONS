@@ -1544,6 +1544,58 @@ class AppLocalizationsAr extends AppLocalizations {
   String get lessonFiles => 'ملفات الدرس';
 
   @override
+  String get lessonImages => 'صور الدرس';
+
+  @override
+  String get audioFiles => 'ملفات صوتية';
+
+  @override
+  String get videoFiles => 'ملفات الفيديو';
+
+  @override
+  String get pdfFiles => 'ملفات PDF';
+
+  @override
+  String get imageLoadFailed => 'تعذر تحميل الصورة';
+
+  @override
+  String get lessonDescriptionShownTop => 'يُعرض الوصف في أعلى الشاشة.';
+
+  @override
+  String get imageGalleryShownTop => 'يُعرض معرض الصور في أعلى الشاشة.';
+
+  @override
+  String get downloadShownTop =>
+      'يُعرض التحميل للمشاهدة دون اتصال في أعلى الشاشة.';
+
+  @override
+  String get lessonFilesShownTop => 'يُعرض ملفات الدرس في أعلى الشاشة.';
+
+  @override
+  String get tapToShowVideoTop => 'اضغط لعرض الفيديو في أعلى الشاشة.';
+
+  @override
+  String get loadingAudioDuration => 'جاري تحميل مدة الصوت...';
+
+  @override
+  String audioClipLabel(int index) {
+    return 'مقطع صوتي $index';
+  }
+
+  @override
+  String videoLabel(int index) {
+    return 'فيديو $index';
+  }
+
+  @override
+  String pdfFileLabel(int index) {
+    return 'ملف PDF $index';
+  }
+
+  @override
+  String get nowPlaying => 'يعمل الآن';
+
+  @override
   String get noFilesAvailable => 'لا توجد ملفات متاحة';
 
   @override

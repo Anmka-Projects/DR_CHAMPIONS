@@ -659,6 +659,7 @@ class TeacherDashboardService {
     String? fileUrl,
     bool isFree = false,
     int order = 0,
+    Map<String, dynamic>? extraFields,
   }) async {
     try {
       final url = ApiEndpoints.adminCurriculumLessons(courseId, sectionId);
@@ -672,6 +673,11 @@ class TeacherDashboardService {
       if (content != null) body['content'] = content;
       if (videoUrl != null) body['videoUrl'] = videoUrl;
       if (fileUrl != null) body['fileUrl'] = fileUrl;
+      if (extraFields != null) {
+        for (final e in extraFields.entries) {
+          if (e.value != null) body[e.key] = e.value;
+        }
+      }
       final response = await ApiClient.instance.post(
         url,
         body: body,
@@ -706,6 +712,7 @@ class TeacherDashboardService {
     String? fileUrl,
     bool? isFree,
     int? order,
+    Map<String, dynamic>? extraFields,
   }) async {
     try {
       final url =
@@ -719,6 +726,11 @@ class TeacherDashboardService {
       if (fileUrl != null) body['fileUrl'] = fileUrl;
       if (isFree != null) body['isFree'] = isFree;
       if (order != null) body['order'] = order;
+      if (extraFields != null) {
+        for (final e in extraFields.entries) {
+          if (e.value != null) body[e.key] = e.value;
+        }
+      }
       final response = await ApiClient.instance.put(
         url,
         body: body,

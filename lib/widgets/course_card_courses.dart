@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'dart:ui' as ui;
 import '../core/design/app_colors.dart';
 import '../core/design/app_text_styles.dart';
-import '../core/design/app_radius.dart';
 
 /// Course Card for Courses Screen - Pixel-perfect match to React version
 /// Matches: components/ui/course-card.tsx

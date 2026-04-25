@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -35,6 +36,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   int _totalPages = 0;
   bool _isReady = false;
   File? _tempPdfFile;
+  bool _showPageScrubber = false;
+  Timer? _scrubberAutoHideTimer;
 
   @override
   void initState() {
@@ -297,8 +300,21 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     return file;
   }
 
+  void _showScrubberTemporarily({Duration hideAfter = const Duration(seconds: 2)}) {
+    if (!mounted || !_isReady || _totalPages <= 1) return;
+    _scrubberAutoHideTimer?.cancel();
+    if (!_showPageScrubber) {
+      setState(() => _showPageScrubber = true);
+    }
+    _scrubberAutoHideTimer = Timer(hideAfter, () {
+      if (!mounted) return;
+      setState(() => _showPageScrubber = false);
+    });
+  }
+
   @override
   void dispose() {
+    _scrubberAutoHideTimer?.cancel();
     _pdfViewController?.dispose();
     // Clean up temporary PDF file
     if (_tempPdfFile != null) {
@@ -384,7 +400,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                         ),
                         if (_isReady && _totalPages > 0)
                           Text(
-                            'صفحة $_currentPage من $_totalPages',
+                            'صفحة ${_currentPage + 1} من $_totalPages',
                             style: GoogleFonts.cairo(
                               fontSize: 12,
                               color: AppColors.mutedForeground,
@@ -430,8 +446,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
             // PDF Viewer
             Expanded(
-              child: _isLoading
-                  ? Container(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: _isLoading
+                        ? Container(
                       color: const Color(0xFFF5F5F5),
                       child: Center(
                         child: Column(
@@ -452,8 +471,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                         ),
                       ),
                     )
-                  : _errorMessage != null
-                      ? Container(
+                        : _errorMessage != null
+                            ? Container(
                           color: const Color(0xFFF5F5F5),
                           child: Center(
                             child: Column(
@@ -515,8 +534,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                             ),
                           ),
                         )
-                      : _localPath != null
-                          ? PDFView(
+                            : _localPath != null
+                                ? PDFView(
                               filePath: _localPath!,
                               enableSwipe: true,
                               swipeHorizontal: false,
@@ -532,6 +551,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                                     _totalPages = pages ?? 0;
                                     _isReady = true;
                                   });
+                                  _showScrubberTemporarily();
                                 }
                               },
                               onError: (error) {
@@ -568,7 +588,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                                 }
                               },
                             )
-                          : Container(
+                                : Container(
                               color: const Color(0xFFF5F5F5),
                               child: Center(
                                 child: Text(
@@ -580,6 +600,101 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                                 ),
                               ),
                             ),
+                  ),
+                  Positioned.fill(
+                    child: Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: (_) => _showScrubberTemporarily(),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                  if (_isReady && _totalPages > 1)
+                    Positioned(
+                      top: 16,
+                      bottom: 16,
+                      right: 8,
+                      child: IgnorePointer(
+                        ignoring: !_showPageScrubber,
+                        child: AnimatedOpacity(
+                          opacity: _showPageScrubber ? 1 : 0,
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOut,
+                          child: AnimatedSlide(
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOut,
+                            offset: _showPageScrubber
+                                ? Offset.zero
+                                : const Offset(0.18, 0),
+                            child: Container(
+                              width: 22,
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.transparent,
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: RotatedBox(
+                                      quarterTurns: 1,
+                                      child: SliderTheme(
+                                        data: SliderTheme.of(context).copyWith(
+                                          trackHeight: 0,
+                                          overlayShape:
+                                              SliderComponentShape.noOverlay,
+                                          activeTrackColor: Colors.transparent,
+                                          inactiveTrackColor:
+                                              Colors.transparent,
+                                          disabledActiveTrackColor:
+                                              Colors.transparent,
+                                          disabledInactiveTrackColor:
+                                              Colors.transparent,
+                                          activeTickMarkColor:
+                                              Colors.transparent,
+                                          inactiveTickMarkColor:
+                                              Colors.transparent,
+                                          thumbColor: AppColors.purple,
+                                          thumbShape:
+                                              const RoundSliderThumbShape(
+                                            enabledThumbRadius: 7,
+                                          ),
+                                        ),
+                                        child: Slider(
+                                          min: 0,
+                                          max: (_totalPages - 1).toDouble(),
+                                          value: _currentPage
+                                              .clamp(0, _totalPages - 1)
+                                              .toDouble(),
+                                          activeColor: AppColors.purple,
+                                          inactiveColor: AppColors.purple
+                                              .withOpacity(0.2),
+                                          onChangeStart: (_) {
+                                            _scrubberAutoHideTimer?.cancel();
+                                            if (!_showPageScrubber) {
+                                              setState(() =>
+                                                  _showPageScrubber = true);
+                                            }
+                                          },
+                                          onChanged: (value) {
+                                            final page = value.round();
+                                            _pdfViewController?.setPage(page);
+                                            setState(() => _currentPage = page);
+                                          },
+                                          onChangeEnd: (_) =>
+                                              _showScrubberTemporarily(),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ],
         ),

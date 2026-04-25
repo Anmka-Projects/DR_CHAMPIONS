@@ -18,6 +18,7 @@ class ProgressScreen extends StatefulWidget {
 
 class _ProgressScreenState extends State<ProgressScreen> {
   String _period = 'weekly';
+  String _selectedSubjectKey = 'all';
   bool _isLoading = true;
   String? _error;
   Map<String, dynamic>? _progressData;
@@ -76,6 +77,26 @@ class _ProgressScreenState extends State<ProgressScreen> {
       });
       _fetchProgressData();
     }
+  }
+
+  List<Map<String, String>> _subjectOptions(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return [
+      {'key': 'all', 'label': l10n.allSubjects},
+      {'key': 'literature', 'label': l10n.literature},
+      {'key': 'math', 'label': l10n.math},
+      {'key': 'biology', 'label': l10n.biology},
+      {'key': 'physics', 'label': l10n.physics},
+      {'key': 'chemistry', 'label': l10n.chemistry},
+    ];
+  }
+
+  String _selectedSubjectLabel(BuildContext context) {
+    final options = _subjectOptions(context);
+    return options.firstWhere(
+      (o) => o['key'] == _selectedSubjectKey,
+      orElse: () => options.first,
+    )['label']!;
   }
 
   @override
@@ -143,40 +164,80 @@ class _ProgressScreenState extends State<ProgressScreen> {
                                             color: AppColors.foreground,
                                           ),
                                         ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, // px-4
-                                            vertical: 8, // py-2
+                                        PopupMenuButton<String>(
+                                          onSelected: (value) {
+                                            if (_selectedSubjectKey == value) {
+                                              return;
+                                            }
+                                            setState(() {
+                                              _selectedSubjectKey = value;
+                                            });
+                                          },
+                                          itemBuilder: (context) {
+                                            final options =
+                                                _subjectOptions(context);
+                                            return options
+                                                .map(
+                                                  (option) => PopupMenuItem<
+                                                      String>(
+                                                    value: option['key']!,
+                                                    child: Text(
+                                                      option['label']!,
+                                                      style: AppTextStyles
+                                                          .bodySmall(
+                                                        color: AppColors
+                                                            .foreground,
+                                                      ).copyWith(
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                )
+                                                .toList();
+                                          },
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(14),
                                           ),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.lavenderLight,
-                                            borderRadius: BorderRadius.circular(
-                                                999), // rounded-full
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              const Icon(
-                                                Icons.bar_chart,
-                                                size: 16, // w-4 h-4
-                                                color: AppColors.purple,
-                                              ),
-                                              const SizedBox(width: 8), // gap-2
-                                              Text(
-                                                AppLocalizations.of(context)!
-                                                    .allSubjects,
-                                                style: AppTextStyles.bodySmall(
+                                          color: Colors.white,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 16, // px-4
+                                              vertical: 8, // py-2
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.lavenderLight,
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                      999), // rounded-full
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                const Icon(
+                                                  Icons.bar_chart,
+                                                  size: 16, // w-4 h-4
                                                   color: AppColors.purple,
-                                                ).copyWith(
-                                                    fontWeight:
-                                                        FontWeight.w500),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              const Icon(
-                                                Icons.keyboard_arrow_down,
-                                                size: 16, // w-4 h-4
-                                                color: AppColors.purple,
-                                              ),
-                                            ],
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  _selectedSubjectLabel(
+                                                      context),
+                                                  style:
+                                                      AppTextStyles.bodySmall(
+                                                    color: AppColors.purple,
+                                                  ).copyWith(
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                const Icon(
+                                                  Icons.keyboard_arrow_down,
+                                                  size: 16,
+                                                  color: AppColors.purple,
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       ],

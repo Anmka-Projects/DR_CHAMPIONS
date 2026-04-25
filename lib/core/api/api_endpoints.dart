@@ -136,6 +136,13 @@ class ApiEndpoints {
       '$baseUrl/courses/$courseId/exams/$examId/start';
   static String courseExamSubmit(String courseId, String examId) =>
       '$baseUrl/courses/$courseId/exams/$examId/submit';
+  static String courseExamQuestionSubmit(
+    String courseId,
+    String examId,
+    String attemptId,
+    String questionId,
+  ) =>
+      '$baseUrl/courses/$courseId/exams/$examId/attempts/$attemptId/questions/$questionId/submit';
   static String courseAssignments(String courseId) =>
       '$baseUrl/courses/$courseId/assignments';
   static String courseAssignmentDetails(String courseId, String assignmentId) =>

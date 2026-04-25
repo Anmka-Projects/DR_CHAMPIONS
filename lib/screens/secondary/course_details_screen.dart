@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -130,6 +131,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   bool _isTogglingWishlist = false;
   bool _isViewingOwnCourse = false;
   final Map<String, bool> _expandedModules = {};
+  final Map<String, bool> _expandedSubModules = {};
   String? _resumeLessonId;
 
   @override
@@ -1221,6 +1223,38 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     return AppLocalizations.of(context)!.planOfferEndsAt(formatted);
   }
 
+  bool _examCanStartFromData(Map<String, dynamic> exam) {
+    final backendCanStart = exam['can_start'];
+    if (backendCanStart is bool && backendCanStart == false) return false;
+
+    final attemptsRemainingRaw = exam['attempts_remaining'];
+    final attemptsRemaining = attemptsRemainingRaw is int
+        ? attemptsRemainingRaw
+        : (attemptsRemainingRaw is num
+            ? attemptsRemainingRaw.toInt()
+            : int.tryParse(attemptsRemainingRaw?.toString() ?? ''));
+    if (attemptsRemaining != null) return attemptsRemaining > 0;
+
+    final maxAttemptsRaw = exam['max_attempts'];
+    final maxAttempts = maxAttemptsRaw is int
+        ? maxAttemptsRaw
+        : (maxAttemptsRaw is num
+            ? maxAttemptsRaw.toInt()
+            : int.tryParse(maxAttemptsRaw?.toString() ?? ''));
+    final attemptsUsedRaw = exam['attempts_used'];
+    final attemptsUsed = attemptsUsedRaw is int
+        ? attemptsUsedRaw
+        : (attemptsUsedRaw is num
+            ? attemptsUsedRaw.toInt()
+            : int.tryParse(attemptsUsedRaw?.toString() ?? '')) ??
+            0;
+    if (maxAttempts != null && maxAttempts > 0) {
+      return attemptsUsed < maxAttempts;
+    }
+
+    return backendCanStart == true || backendCanStart == null;
+  }
+
   IconData _lessonTypeIcon(Map<String, dynamic> lesson) {
     final type = lesson['type']?.toString().toLowerCase();
     switch (type) {
@@ -1248,6 +1282,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       required Map<String, dynamic> lesson,
       required int indent,
       String? moduleKey,
+      String? subModuleKey,
     }) {
       final lessonType = lesson['type']?.toString().toLowerCase();
       if (lessonType == 'assignment' ||
@@ -1261,6 +1296,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         'data': lesson,
         'indent': indent,
         'module_key': moduleKey,
+        'sub_module_key': subModuleKey,
       });
     }
 
@@ -1304,18 +1340,27 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
           // Render subsections first (per spec) + their lessons
           for (int s = 0; s < subsections.length; s++) {
             final subsection = subsections[s];
+            final subModuleKey =
+                (subsection['id'] ?? '${sectionKey}_sub_$s').toString();
+            _expandedSubModules.putIfAbsent(subModuleKey, () => false);
             modulesList.add({
               'type': 'sub_module',
               'data': subsection,
               'indent': 1,
               'module_key': sectionKey,
+              'sub_module_key': subModuleKey,
             });
 
             final subLessons = subsection['lessons'] as List?;
             if (subLessons != null) {
               for (final lesson in subLessons) {
                 if (lesson is Map<String, dynamic>) {
-                  addLesson(lesson: lesson, indent: 2, moduleKey: sectionKey);
+                  addLesson(
+                    lesson: lesson,
+                    indent: 2,
+                    moduleKey: sectionKey,
+                    subModuleKey: subModuleKey,
+                  );
                 }
               }
             }
@@ -1385,19 +1430,29 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
               for (int subIndex = 0; subIndex < subModules.length; subIndex++) {
                 final subModuleRaw = subModules[subIndex];
                 if (subModuleRaw is! Map<String, dynamic>) continue;
+                final subModuleKey =
+                    (subModuleRaw['id'] ?? '${moduleKey}_sub_$subIndex')
+                        .toString();
+                _expandedSubModules.putIfAbsent(subModuleKey, () => false);
 
                 modulesList.add({
                   'type': 'sub_module',
                   'data': subModuleRaw,
                   'indent': 1,
                   'module_key': moduleKey,
+                  'sub_module_key': subModuleKey,
                 });
 
                 final subModuleLessons = subModuleRaw['lessons'] as List?;
                 if (subModuleLessons == null) continue;
                 for (final lesson in subModuleLessons) {
                   if (lesson is Map<String, dynamic>) {
-                    addLesson(lesson: lesson, indent: 2, moduleKey: moduleKey);
+                    addLesson(
+                      lesson: lesson,
+                      indent: 2,
+                      moduleKey: moduleKey,
+                      subModuleKey: subModuleKey,
+                    );
                   }
                 }
               }
@@ -1469,9 +1524,17 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       }
 
       final moduleKey = item['module_key']?.toString();
-      if (moduleKey == null || (_expandedModules[moduleKey] ?? false)) {
-        visibleItems.add(item);
+      if (moduleKey != null && !(_expandedModules[moduleKey] ?? false)) {
+        continue;
       }
+      if (type == 'lesson') {
+        final subModuleKey = item['sub_module_key']?.toString();
+        if (subModuleKey != null &&
+            !(_expandedSubModules[subModuleKey] ?? false)) {
+          continue;
+        }
+      }
+      visibleItems.add(item);
     }
 
     return ListView.builder(
@@ -1556,20 +1619,74 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         }
 
         if (type == 'sub_module') {
+          final moduleKey = item['module_key']?.toString();
+          final subModuleKey =
+              item['sub_module_key']?.toString() ?? 'sub_module_$index';
+          final isExpanded = _expandedSubModules[subModuleKey] ?? false;
+          int lessonCount = 0;
+          for (final nested in modulesList) {
+            if (nested['sub_module_key']?.toString() == subModuleKey &&
+                nested['type'] == 'lesson') {
+              lessonCount++;
+            }
+          }
           return Padding(
             padding: EdgeInsets.only(left: indent * 16.0, bottom: 10),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.grey[50],
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    final next = !(_expandedSubModules[subModuleKey] ?? false);
+                    if (moduleKey != null && next) {
+                      for (final entry in modulesList) {
+                        if (entry['type'] == 'sub_module' &&
+                            entry['module_key']?.toString() == moduleKey) {
+                          final key = entry['sub_module_key']?.toString();
+                          if (key != null) _expandedSubModules[key] = false;
+                        }
+                      }
+                    }
+                    _expandedSubModules[subModuleKey] = next;
+                  });
+                },
                 borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                data['title']?.toString() ?? 'Sub module',
-                style: GoogleFonts.cairo(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.foreground,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          data['title']?.toString() ?? 'Sub module',
+                          style: GoogleFonts.cairo(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.foreground,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '$lessonCount',
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -2096,9 +2213,9 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   }
 
   Widget _buildExamCard(Map<String, dynamic> exam, int index) {
-    final canStart = exam['can_start'] == true;
+    final canStart = _examCanStartFromData(exam);
     final isPassed = exam['is_passed'] == true;
-    final bestScore = exam['best_score'];
+    final bestScoreRaw = exam['best_score'];
     final questionsCount = exam['questions_count'] ?? 0;
     final durationMinutes = exam['duration_minutes'] ?? 15;
     final passingScore = exam['passing_score'] ?? 70;
@@ -2108,12 +2225,11 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     final examTitle =
         exam['title']?.toString() ?? AppLocalizations.of(context)!.exam;
     final examDescription = exam['description']?.toString() ?? '';
-    final targetType =
-        exam['target_type']?.toString().toLowerCase().trim() ??
-            exam['targetType']?.toString().toLowerCase().trim() ??
-            ((exam['lesson_id'] != null || exam['lessonId'] != null)
-                ? 'lesson'
-                : 'course');
+    final targetType = exam['target_type']?.toString().toLowerCase().trim() ??
+        exam['targetType']?.toString().toLowerCase().trim() ??
+        ((exam['lesson_id'] != null || exam['lessonId'] != null)
+            ? 'lesson'
+            : 'course');
     final lessonName =
         exam['lesson_name']?.toString() ?? exam['lessonName']?.toString() ?? '';
     final targetLabel = targetType == 'lesson'
@@ -2124,9 +2240,23 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
             ? 'امتحان الدورة'
             : 'Course exam');
     final isStartingThisExam = _startingExamId == examId;
+    final isEnabled = canStart && !isStartingThisExam;
     final hasCompletedExam =
-        bestScore != null || attemptsUsed > 0 || isPassed == true;
-    final scoreText = bestScore == null ? null : '${bestScore.toString()}%';
+        bestScoreRaw != null || attemptsUsed > 0 || isPassed == true;
+    final bestScoreNum = bestScoreRaw is num
+        ? bestScoreRaw.toDouble()
+        : double.tryParse(bestScoreRaw?.toString() ?? '');
+    final scorePercent = () {
+      if (bestScoreNum == null) return null;
+      final qCount = (questionsCount is num) ? questionsCount.toDouble() : 0.0;
+      // If backend returns points (e.g. 7 out of 10), convert to percentage.
+      if (qCount > 0 && bestScoreNum <= qCount) {
+        return ((bestScoreNum / qCount) * 100).round();
+      }
+      // Otherwise treat it as already percentage.
+      return bestScoreNum.round();
+    }();
+    final scoreText = scorePercent == null ? null : '$scorePercent%';
 
     // Determine if it's a trial exam
     final isTrial = exam['type'] == 'trial' ||
@@ -2217,7 +2347,9 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                                   style: GoogleFonts.cairo(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w700,
-                                    color: isTrial ? Colors.white : AppColors.purple,
+                                    color: isTrial
+                                        ? Colors.white
+                                        : AppColors.purple,
                                   ),
                                 ),
                               ),
@@ -2309,7 +2441,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                       ),
                   ],
                 ),
-                if (bestScore != null) ...[
+                if (scorePercent != null) ...[
                   const SizedBox(height: 12),
                   Container(
                     padding:
@@ -2333,9 +2465,9 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                         const SizedBox(width: 8),
                         Text(
                           isPassed
-                              ? '${AppLocalizations.of(context)!.bestScore(bestScore)} ✓'
+                              ? '${AppLocalizations.of(context)!.bestScore(scorePercent)} ✓'
                               : AppLocalizations.of(context)!
-                                  .bestScore(bestScore),
+                                  .bestScore(scorePercent),
                           style: GoogleFonts.cairo(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
@@ -2394,67 +2526,69 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                   ),
                   const SizedBox(height: 10),
                 ],
-                GestureDetector(
-                  onTap: canStart && !isStartingThisExam
-                      ? () => _startExam(examId, exam)
-                      : null,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    decoration: BoxDecoration(
-                      color: canStart
-                          ? (isTrial ? Colors.white : AppColors.purple)
-                          : (isTrial
-                              ? Colors.white.withOpacity(0.5)
-                              : Colors.grey[300]),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        isStartingThisExam
-                            ? SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.2,
-                                  color:
-                                      isTrial ? AppColors.purple : Colors.white,
-                                ),
-                              )
-                            : Icon(
-                                canStart
-                                    ? Icons.play_arrow_rounded
-                                    : Icons.lock_rounded,
-                                color: canStart
-                                    ? (isTrial
-                                        ? AppColors.purple
-                                        : Colors.white)
-                                    : Colors.grey,
-                                size: 22,
-                              ),
-                        const SizedBox(width: 8),
-                        Text(
+                Opacity(
+                  opacity: isEnabled ? 1 : 0.75,
+                  child: GestureDetector(
+                    onTap: isEnabled ? () => _startExam(examId, exam) : null,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: isEnabled
+                            ? (isTrial ? Colors.white : AppColors.purple)
+                            : (isTrial
+                                ? Colors.white.withOpacity(0.5)
+                                : Colors.grey[300]),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
                           isStartingThisExam
-                              ? AppLocalizations.of(context)!.loadingExam
-                              : canStart
-                                  ? AppLocalizations.of(context)!
-                                      .startExamButton
-                                  : (maxAttempts != null &&
-                                          attemptsUsed >= maxAttempts
-                                      ? AppLocalizations.of(context)!
-                                          .attemptsExhausted
-                                      : AppLocalizations.of(context)!
-                                          .notAvailable),
-                          style: GoogleFonts.cairo(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: canStart
-                                ? (isTrial ? AppColors.purple : Colors.white)
-                                : Colors.grey,
+                              ? SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.2,
+                                    color: isTrial
+                                        ? AppColors.purple
+                                        : Colors.white,
+                                  ),
+                                )
+                              : Icon(
+                                  isEnabled
+                                      ? Icons.play_arrow_rounded
+                                      : Icons.lock_rounded,
+                                  color: isEnabled
+                                      ? (isTrial
+                                          ? AppColors.purple
+                                          : Colors.white)
+                                      : Colors.grey,
+                                  size: 22,
+                                ),
+                          const SizedBox(width: 8),
+                          Text(
+                            isStartingThisExam
+                                ? AppLocalizations.of(context)!.loadingExam
+                                : canStart
+                                    ? AppLocalizations.of(context)!
+                                        .startExamButton
+                                    : (maxAttempts != null &&
+                                            attemptsUsed >= maxAttempts
+                                        ? AppLocalizations.of(context)!
+                                            .attemptsExhausted
+                                        : AppLocalizations.of(context)!
+                                            .notAvailable),
+                            style: GoogleFonts.cairo(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: isEnabled
+                                  ? (isTrial ? AppColors.purple : Colors.white)
+                                  : Colors.grey,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -2739,17 +2873,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     }).toList();
     if (parsedPlans.isEmpty) return null;
 
-    final fullPriceText = () {
-      final compact = formatCoursePriceCompact(courseData);
-      if (compact != null && compact.isNotEmpty) return compact;
-      final parsed = parseCourseTotalPricing(courseData);
-      if (parsed.amount <= 0) return AppLocalizations.of(context)!.notAvailable;
-      return _formatSingleCurrencyPrice(
-        currency: parsed.currency,
-        amount: parsed.amount,
-      );
-    }();
-
     return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
@@ -2802,8 +2925,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                           children: [
                             _buildPaymentChoiceTile(
                               title: AppLocalizations.of(context)!.coursePrice,
-                              subtitle:
-                                  '${AppLocalizations.of(context)!.total}: $fullPriceText',
+                              subtitle: 'Full course purchase',
                               isSelected: selectedIndex == 0,
                               onTap: () =>
                                   setModalState(() => selectedIndex = 0),
@@ -2815,6 +2937,14 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                               final planName = plan['name']?.toString() ??
                                   AppLocalizations.of(context)!
                                       .subscriptionPlan;
+                              final durationText = _formatPlanDuration(
+                                plan['duration_value'],
+                                plan['duration_unit'],
+                              );
+                              final offerEndsLabel = _formatPlanOfferEndLabel(
+                                context,
+                                plan['offer_ends_at'] ?? plan['offerEndsAt'],
+                              );
                               final planPriceText = () {
                                 final currency =
                                     plan['currency']?.toString().toUpperCase();
@@ -2838,9 +2968,11 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                               }();
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
-                                child: _buildPaymentChoiceTile(
+                                child: _buildPlanPaymentChoiceTile(
                                   title: planName,
-                                  subtitle: planPriceText,
+                                  priceText: planPriceText,
+                                  durationText: durationText,
+                                  offerEndsLabel: offerEndsLabel,
                                   isSelected: selectedIndex == cardIndex,
                                   onTap: () => setModalState(
                                       () => selectedIndex = cardIndex),
@@ -2949,6 +3081,148 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPlanPaymentChoiceTile({
+    required String title,
+    required String priceText,
+    required String durationText,
+    required bool isSelected,
+    required VoidCallback onTap,
+    String? offerEndsLabel,
+  }) {
+    final unit = durationText.toLowerCase();
+    final isMonthly = unit.contains('month') || unit.contains('شهر');
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.lavenderLight : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppColors.purple : Colors.grey.shade300,
+            width: isSelected ? 1.6 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: AppColors.purple.withOpacity(0.14),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: GoogleFonts.cairo(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.foreground,
+                          ),
+                        ),
+                      ),
+                      if (isMonthly)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.purple.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'Monthly',
+                            style: GoogleFonts.cairo(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.purple,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      _buildPlanMetaChip(
+                        icon: Icons.schedule_rounded,
+                        text: durationText,
+                      ),
+                      _buildPlanMetaChip(
+                        icon: Icons.payments_rounded,
+                        text: priceText,
+                      ),
+                    ],
+                  ),
+                  if (offerEndsLabel != null &&
+                      offerEndsLabel.trim().isNotEmpty) ...[
+                    const SizedBox(height: 7),
+                    Text(
+                      offerEndsLabel,
+                      style: GoogleFonts.cairo(
+                        fontSize: 11,
+                        color: const Color(0xFFB45309),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              isSelected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_off_rounded,
+              color: isSelected ? AppColors.purple : Colors.grey.shade500,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlanMetaChip({required IconData icon, required String text}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.grey.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: AppColors.mutedForeground),
+          const SizedBox(width: 5),
+          Text(
+            text,
+            style: GoogleFonts.cairo(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppColors.foreground,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3357,14 +3631,30 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         exams = _extractExamsFromCourse(course);
       }
 
-      // Exams tab: exams API only (assignments stay on Assignments tab).
-      final examOnly = exams.map((raw) {
-        final m = Map<String, dynamic>.from(raw);
-        if (m['type'] == null || (m['type']?.toString().isEmpty ?? true)) {
-          m['type'] = 'exam';
-        }
-        return m;
-      }).toList();
+      bool isCourseLevelExam(Map<String, dynamic> m) {
+        final targetType = m['target_type']?.toString().toLowerCase().trim() ??
+            m['targetType']?.toString().toLowerCase().trim() ??
+            '';
+        final lessonId =
+            m['lesson_id']?.toString() ?? m['lessonId']?.toString();
+        if (targetType == 'lesson') return false;
+        if (targetType == 'course') return true;
+        // If target_type is missing, treat any exam bound to a lesson as lesson exam.
+        if (lessonId != null && lessonId.isNotEmpty) return false;
+        return true;
+      }
+
+      // Exams tab must show course-level exams only.
+      final examOnly = exams
+          .map((raw) {
+            final m = Map<String, dynamic>.from(raw);
+            if (m['type'] == null || (m['type']?.toString().isEmpty ?? true)) {
+              m['type'] = 'exam';
+            }
+            return m;
+          })
+          .where(isCourseLevelExam)
+          .toList();
 
       // Print detailed response
       if (kDebugMode) {
@@ -3418,7 +3708,18 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
               'ℹ️ Using exams fallback from course payload: ${fallback.length}');
         }
         setState(() {
-          _courseExams = fallback;
+          _courseExams = fallback.where((m) {
+            final targetType =
+                m['target_type']?.toString().toLowerCase().trim() ??
+                    m['targetType']?.toString().toLowerCase().trim() ??
+                    '';
+            final lessonId =
+                m['lesson_id']?.toString() ?? m['lessonId']?.toString();
+            if (targetType == 'lesson') return false;
+            if (targetType == 'course') return true;
+            if (lessonId != null && lessonId.isNotEmpty) return false;
+            return true;
+          }).toList();
           _isLoadingExams = false;
         });
         return;
@@ -3816,6 +4117,24 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
 
   Future<void> _startExam(String examId, Map<String, dynamic> examData) async {
     if (examId.isEmpty) return;
+    if (!_examCanStartFromData(examData)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No attempts remaining for this exam.',
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     final course = _courseData ?? widget.course;
     if (course == null || course['id'] == null) return;
@@ -3984,12 +4303,38 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         }
 
         final attemptsUsedRaw = updated['attempts_used'];
+        int attemptsUsed;
         if (attemptsUsedRaw is int) {
-          updated['attempts_used'] = attemptsUsedRaw + 1;
+          attemptsUsed = attemptsUsedRaw + 1;
         } else if (attemptsUsedRaw is num) {
-          updated['attempts_used'] = attemptsUsedRaw.toInt() + 1;
+          attemptsUsed = attemptsUsedRaw.toInt() + 1;
         } else {
-          updated['attempts_used'] = 1;
+          attemptsUsed = 1;
+        }
+        updated['attempts_used'] = attemptsUsed;
+
+        // Instant lock when attempts are exhausted.
+        final maxAttemptsRaw = updated['max_attempts'];
+        final maxAttempts = maxAttemptsRaw is int
+            ? maxAttemptsRaw
+            : (maxAttemptsRaw is num ? maxAttemptsRaw.toInt() : null);
+        if (maxAttempts != null && maxAttempts > 0) {
+          updated['can_start'] = attemptsUsed < maxAttempts;
+        }
+
+        // If backend explicitly returns availability flags, honor them.
+        final backendCanStart = result['can_start'];
+        if (backendCanStart is bool) {
+          updated['can_start'] = backendCanStart;
+        }
+        final attemptsRemainingRaw = result['attempts_remaining'];
+        final attemptsRemaining = attemptsRemainingRaw is int
+            ? attemptsRemainingRaw
+            : (attemptsRemainingRaw is num
+                ? attemptsRemainingRaw.toInt()
+                : null);
+        if (attemptsRemaining != null) {
+          updated['can_start'] = attemptsRemaining > 0;
         }
 
         return updated;
@@ -4168,6 +4513,15 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
   Map<String, dynamic>? _examResult;
   List<Map<String, dynamic>> _questions = [];
   String? _attemptId;
+  final Map<int, bool> _submittedQuestions = {};
+  final Map<int, bool> _questionCorrectness = {};
+  final Map<int, bool> _questionEvaluated = {};
+  final Map<int, String?> _questionExplanations = {};
+  final Map<int, String?> _questionUserAnswerText = {};
+  final Map<int, String?> _questionCorrectAnswerText = {};
+  Timer? _examTimer;
+  int _remainingSeconds = 0;
+  bool _timerExpired = false;
 
   @override
   void initState() {
@@ -4192,7 +4546,62 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
       _singleAnswers[i] = null;
       _selectedAnswers[i] = [];
       _textAnswerControllers[i] = TextEditingController();
+      _submittedQuestions[i] = false;
+      _questionCorrectness[i] = false;
+      _questionEvaluated[i] = false;
+      _questionExplanations[i] = null;
+      _questionUserAnswerText[i] = null;
+      _questionCorrectAnswerText[i] = null;
     }
+
+    _startExamTimer();
+  }
+
+  int _resolveExamDurationMinutes() {
+    final candidates = [
+      widget.examSession?['duration_minutes'],
+      widget.examData?['duration_minutes'],
+      widget.examSession?['duration'],
+      widget.examData?['duration'],
+    ];
+    for (final c in candidates) {
+      if (c is int && c > 0) return c;
+      final parsed = int.tryParse(c?.toString() ?? '');
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    return 15;
+  }
+
+  void _startExamTimer() {
+    _examTimer?.cancel();
+    final durationMinutes = _resolveExamDurationMinutes();
+    _remainingSeconds = durationMinutes * 60;
+    _timerExpired = false;
+    _examTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_showResult || _isSubmitting) return;
+      if (_remainingSeconds <= 1) {
+        setState(() {
+          _remainingSeconds = 0;
+          _timerExpired = true;
+        });
+        timer.cancel();
+        _submitExam();
+        return;
+      }
+      setState(() {
+        _remainingSeconds--;
+      });
+    });
+  }
+
+  String _formatRemainingTime() {
+    final mins = (_remainingSeconds ~/ 60).toString().padLeft(2, '0');
+    final secs = (_remainingSeconds % 60).toString().padLeft(2, '0');
+    return '$mins:$secs';
   }
 
   bool _isTextQuestion(Map<String, dynamic> question) {
@@ -4211,13 +4620,19 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
         format.contains('essay');
   }
 
+  bool _isMultipleSelectQuestion(Map<String, dynamic> question) {
+    if (question['is_multiple'] == true) return true;
+    final type = question['type']?.toString().toLowerCase().trim() ?? '';
+    return type == 'multiple_select' ||
+        type == 'multi_select' ||
+        type == 'checkbox';
+  }
+
   void _selectAnswer(int optionIndex) {
     setState(() {
       final question = _questions[_currentQuestionIndex];
 
-      // Check if multiple choice
-      final isMultiple = question['is_multiple'] == true ||
-          question['type'] == 'multiple_choice';
+      final isMultiple = _isMultipleSelectQuestion(question);
 
       if (isMultiple) {
         final selected = _selectedAnswers[_currentQuestionIndex] ?? [];
@@ -4250,6 +4665,210 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
     }
   }
 
+  bool get _isCurrentQuestionSubmitted =>
+      _submittedQuestions[_currentQuestionIndex] == true;
+
+  String? _extractQuestionExplanation(Map<String, dynamic> question) {
+    final candidates = [
+      question['explanation'],
+      question['answer_explanation'],
+      question['feedback'],
+      question['solution'],
+    ];
+    for (final c in candidates) {
+      final text = c?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  String _normalizeAnswerText(dynamic value) {
+    if (value == null) return '';
+    if (value is List) {
+      final parts = <String>[];
+      for (final item in value) {
+        if (item is Map) {
+          final map = Map<String, dynamic>.from(item);
+          final text = map['text']?.toString().trim();
+          final token = map['id']?.toString() ??
+              map['value']?.toString() ??
+              map['index']?.toString();
+          if (text != null && text.isNotEmpty) {
+            parts.add(text);
+          } else if (token != null && token.trim().isNotEmpty) {
+            parts.add(token.trim());
+          }
+          continue;
+        }
+        final itemText = item?.toString().trim();
+        if (itemText != null && itemText.isNotEmpty) {
+          parts.add(itemText);
+        }
+      }
+      return parts.join(', ');
+    }
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      final text = map['text']?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+      final token = map['id']?.toString() ??
+          map['value']?.toString() ??
+          map['index']?.toString();
+      return token?.trim() ?? '';
+    }
+    return value.toString().trim();
+  }
+
+  String? _extractExplanationFromSubmitResponse(Map<String, dynamic> data) {
+    final candidates = [
+      data['explanation'],
+      data['answer_explanation'],
+      data['feedback'],
+      data['solution'],
+    ];
+    for (final c in candidates) {
+      final text = c?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  String _optionLabel(int index) {
+    if (index < 26) return String.fromCharCode(65 + index); // A-Z
+    final first = ((index ~/ 26) - 1).clamp(0, 25);
+    final second = index % 26;
+    return '${String.fromCharCode(65 + first)}${String.fromCharCode(65 + second)}';
+  }
+
+  bool _isExamTimeExpiredError(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('انتهى وقت الامتحان') ||
+        text.contains('time') &&
+            text.contains('exam') &&
+            text.contains('end') ||
+        text.contains('time is over') ||
+        text.contains('time expired') ||
+        text.contains('attempt expired');
+  }
+
+  void _submitCurrentQuestionAnswer() {
+    unawaited(_submitCurrentQuestionAnswerAsync());
+  }
+
+  Future<void> _submitCurrentQuestionAnswerAsync() async {
+    if (!_hasSelectedAnswer || _isCurrentQuestionSubmitted) return;
+    if (_isSubmitting) return;
+    if (_attemptId == null || _attemptId!.trim().isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Failed to submit answer: missing attempt id')),
+      );
+      return;
+    }
+
+    final question = _questions[_currentQuestionIndex];
+    final questionId =
+        question['id']?.toString() ?? question['question_id']?.toString() ?? '';
+    if (questionId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Failed to submit answer: missing question id')),
+      );
+      return;
+    }
+
+    final isText = _isTextQuestion(question);
+    final isMultiple = _isMultipleSelectQuestion(question);
+    final answerTextRaw =
+        _textAnswerControllers[_currentQuestionIndex]?.text.trim() ?? '';
+
+    String? answer;
+    List<String> selectedOptions = const [];
+    String? answerText;
+
+    if (isText) {
+      answer = null;
+      selectedOptions = const [];
+      answerText = answerTextRaw.isEmpty ? null : answerTextRaw;
+    } else if (isMultiple) {
+      selectedOptions =
+          List<String>.from(_selectedAnswers[_currentQuestionIndex] ?? []);
+      answer = selectedOptions.isNotEmpty ? selectedOptions.first : null;
+      answerText = null;
+    } else {
+      final selected = _singleAnswers[_currentQuestionIndex];
+      answer = selected;
+      selectedOptions = selected != null ? [selected] : const [];
+      answerText = null;
+    }
+
+    var shouldFinalizeExam = false;
+    setState(() => _isSubmitting = true);
+    try {
+      final submitData = await ExamsService.instance.submitExamQuestion(
+        widget.courseId,
+        widget.examId,
+        attemptId: _attemptId!,
+        questionId: questionId,
+        answer: answer,
+        selectedOptions: selectedOptions,
+        answerText: answerText,
+      );
+
+      final hasEvaluation = submitData['is_correct'] is bool;
+      final isCorrect = submitData['is_correct'] == true;
+
+      final userAnswerTextFromApi =
+          _normalizeAnswerText(submitData['user_answer']).trim();
+      final correctAnswerTextFromApi =
+          _normalizeAnswerText(submitData['correct_answer']).trim();
+      final explanation = _extractExplanationFromSubmitResponse(submitData) ??
+          _extractQuestionExplanation(question);
+
+      if (!mounted) return;
+      setState(() {
+        _submittedQuestions[_currentQuestionIndex] = true;
+        _questionEvaluated[_currentQuestionIndex] = hasEvaluation;
+        _questionCorrectness[_currentQuestionIndex] = isCorrect;
+        _questionExplanations[_currentQuestionIndex] = explanation;
+        _questionUserAnswerText[_currentQuestionIndex] = userAnswerTextFromApi
+                .isNotEmpty
+            ? userAnswerTextFromApi
+            : (isText
+                ? (answerTextRaw.isNotEmpty ? answerTextRaw : 'Not answered')
+                : 'Not answered');
+        _questionCorrectAnswerText[_currentQuestionIndex] =
+            correctAnswerTextFromApi.isNotEmpty
+                ? correctAnswerTextFromApi
+                : '—';
+      });
+    } catch (e) {
+      shouldFinalizeExam = _isExamTimeExpiredError(e);
+      if (shouldFinalizeExam && mounted) {
+        setState(() => _timerExpired = true);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shouldFinalizeExam
+                ? 'Exam time is over... showing your result'
+                : 'Question submission failed: $e',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+    if (shouldFinalizeExam && mounted && !_showResult) {
+      await _submitExam();
+    }
+  }
+
   bool get _hasSelectedAnswer {
     final question = _questions[_currentQuestionIndex];
     final isText = _isTextQuestion(question);
@@ -4260,8 +4879,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
               .isNotEmpty ??
           false);
     }
-    final isMultiple = question['is_multiple'] == true ||
-        question['type'] == 'multiple_choice';
+    final isMultiple = _isMultipleSelectQuestion(question);
 
     if (isMultiple) {
       final selected = _selectedAnswers[_currentQuestionIndex] ?? [];
@@ -4286,8 +4904,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
             question['question_id']?.toString() ??
             'q_$i';
 
-        final isMultiple = question['is_multiple'] == true ||
-            question['type'] == 'multiple_choice';
+        final isMultiple = _isMultipleSelectQuestion(question);
         final isText = _isTextQuestion(question);
 
         if (isText) {
@@ -4428,6 +5045,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
 
   @override
   void dispose() {
+    _examTimer?.cancel();
     for (final c in _textAnswerControllers.values) {
       c.dispose();
     }
@@ -4442,7 +5060,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
         appBar: AppBar(
           backgroundColor: AppColors.purple,
           title: Text(
-            AppLocalizations.of(context)!.trialExam,
+            'Exam',
             style: GoogleFonts.cairo(
                 fontWeight: FontWeight.bold, color: Colors.white),
           ),
@@ -4461,7 +5079,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                AppLocalizations.of(context)!.loadingQuestions,
+                'Loading questions...',
                 style: GoogleFonts.cairo(
                   fontSize: 16,
                   color: AppColors.mutedForeground,
@@ -4480,15 +5098,14 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
     final question = _questions[_currentQuestionIndex];
     final options = question['options'] as List? ?? [];
     final isText = _isTextQuestion(question);
-    final isMultiple = question['is_multiple'] == true ||
-        question['type'] == 'multiple_choice';
+    final isMultiple = _isMultipleSelectQuestion(question);
 
     return Scaffold(
       backgroundColor: AppColors.beige,
       appBar: AppBar(
         backgroundColor: AppColors.purple,
         title: Text(
-          AppLocalizations.of(context)!.trialExam,
+          'Exam',
           style: GoogleFonts.cairo(
               fontWeight: FontWeight.bold, color: Colors.white),
         ),
@@ -4498,6 +5115,41 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Center(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: (_remainingSeconds <= 60)
+                      ? Colors.red.withOpacity(0.18)
+                      : Colors.white.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.timer_outlined,
+                      size: 16,
+                      color: (_remainingSeconds <= 60)
+                          ? Colors.red.shade100
+                          : Colors.white,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _formatRemainingTime(),
+                      style: GoogleFonts.cairo(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(left: 16),
             child: Center(
@@ -4527,8 +5179,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    AppLocalizations.of(context)!
-                        .questionIndex(_currentQuestionIndex + 1),
+                    'Question ${_currentQuestionIndex + 1}',
                     style: GoogleFonts.cairo(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
@@ -4539,7 +5190,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                   Text(
                     question['question']?.toString() ??
                         question['text']?.toString() ??
-                        AppLocalizations.of(context)!.question,
+                        'Question',
                     style: GoogleFonts.cairo(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -4566,7 +5217,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'اكتب إجابتك',
+                      'Write your answer',
                       style: GoogleFonts.cairo(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
@@ -4578,10 +5229,11 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                       controller: _textAnswerControllers[_currentQuestionIndex],
                       minLines: 4,
                       maxLines: 8,
+                      readOnly: _isCurrentQuestionSubmitted,
                       textInputAction: TextInputAction.newline,
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
-                        hintText: 'اكتب إجابة السؤال النصي هنا...',
+                        hintText: 'Write your text answer here...',
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -4624,7 +5276,9 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: GestureDetector(
-                    onTap: () => _selectAnswer(index),
+                    onTap: _isCurrentQuestionSubmitted
+                        ? null
+                        : () => _selectAnswer(index),
                     child: Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -4658,7 +5312,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                                       size: 20,
                                     )
                                   : Text(
-                                      String.fromCharCode(1571 + index),
+                                      _optionLabel(index),
                                       style: GoogleFonts.cairo(
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold,
@@ -4696,48 +5350,218 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
 
             const SizedBox(height: 20),
 
-            // Next Button
-            GestureDetector(
-              onTap:
-                  (_hasSelectedAnswer && !_isSubmitting) ? _nextQuestion : null,
-              child: Container(
+            if (_isCurrentQuestionSubmitted) ...[
+              Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  gradient: (_hasSelectedAnswer && !_isSubmitting)
-                      ? const LinearGradient(
-                          colors: [Color(0xFF0C52B3), Color(0xFF093F8A)])
-                      : null,
-                  color: (!_hasSelectedAnswer || _isSubmitting)
-                      ? Colors.grey[300]
-                      : null,
-                  borderRadius: BorderRadius.circular(14),
+                  color: (_questionEvaluated[_currentQuestionIndex] == true)
+                      ? ((_questionCorrectness[_currentQuestionIndex] == true)
+                          ? Colors.green.shade50
+                          : Colors.red.shade50)
+                      : Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: (_questionEvaluated[_currentQuestionIndex] == true)
+                        ? ((_questionCorrectness[_currentQuestionIndex] == true)
+                            ? Colors.green.shade200
+                            : Colors.red.shade200)
+                        : Colors.blue.shade200,
+                  ),
                 ),
-                child: Center(
-                  child: _isSubmitting
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.grey),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          (_questionEvaluated[_currentQuestionIndex] == true)
+                              ? ((_questionCorrectness[_currentQuestionIndex] ==
+                                      true)
+                                  ? Icons.check_circle_rounded
+                                  : Icons.cancel_rounded)
+                              : Icons.info_outline_rounded,
+                          size: 20,
+                          color: (_questionEvaluated[_currentQuestionIndex] ==
+                                  true)
+                              ? ((_questionCorrectness[_currentQuestionIndex] ==
+                                      true)
+                                  ? Colors.green
+                                  : Colors.red)
+                              : Colors.blue,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          (_questionEvaluated[_currentQuestionIndex] == true)
+                              ? ((_questionCorrectness[_currentQuestionIndex] ==
+                                      true)
+                                  ? 'Your answer is correct'
+                                  : 'Your answer is incorrect')
+                              : 'Answer submitted',
+                          style: GoogleFonts.cairo(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.foreground,
                           ),
-                        )
-                      : Text(
-                          _currentQuestionIndex == _questions.length - 1
-                              ? AppLocalizations.of(context)!.finishExamLabel
-                              : AppLocalizations.of(context)!.next,
+                        ),
+                      ],
+                    ),
+                    if ((_questionExplanations[_currentQuestionIndex] ?? '')
+                        .trim()
+                        .isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Explanation: ${_questionExplanations[_currentQuestionIndex]}',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          color: AppColors.foreground,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Your answer: ${_questionUserAnswerText[_currentQuestionIndex] ?? 'Not answered'}',
+                            style: GoogleFonts.cairo(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.foreground,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Correct answer: ${_questionCorrectAnswerText[_currentQuestionIndex] ?? '—'}',
+                            style: GoogleFonts.cairo(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Navigation buttons: Previous + Submit/Next/Finish
+            Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: (_isSubmitting || _currentQuestionIndex == 0)
+                        ? null
+                        : () {
+                            setState(() {
+                              _currentQuestionIndex--;
+                            });
+                          },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        color: (_isSubmitting || _currentQuestionIndex == 0)
+                            ? Colors.grey[300]
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: (_isSubmitting || _currentQuestionIndex == 0)
+                              ? Colors.grey.shade300
+                              : AppColors.purple.withOpacity(0.35),
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Previous',
                           style: GoogleFonts.cairo(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: _hasSelectedAnswer
-                                ? Colors.white
-                                : Colors.grey[500],
+                            color: (_isSubmitting || _currentQuestionIndex == 0)
+                                ? Colors.grey[500]
+                                : AppColors.purple,
                           ),
                         ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: GestureDetector(
+                    onTap: _isSubmitting
+                        ? null
+                        : (_timerExpired
+                            ? null
+                            : (_isCurrentQuestionSubmitted
+                                ? (_currentQuestionIndex ==
+                                        _questions.length - 1
+                                    ? _submitExam
+                                    : _nextQuestion)
+                                : (_hasSelectedAnswer
+                                    ? _submitCurrentQuestionAnswer
+                                    : null))),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        gradient: ((_isCurrentQuestionSubmitted ||
+                                    _hasSelectedAnswer) &&
+                                !_isSubmitting)
+                            ? const LinearGradient(
+                                colors: [Color(0xFF0C52B3), Color(0xFF093F8A)])
+                            : null,
+                        color: ((!_isCurrentQuestionSubmitted &&
+                                    !_hasSelectedAnswer) ||
+                                _isSubmitting)
+                            ? Colors.grey[300]
+                            : null,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Center(
+                        child: _isSubmitting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.grey),
+                                ),
+                              )
+                            : Text(
+                                _isCurrentQuestionSubmitted
+                                    ? (_currentQuestionIndex ==
+                                            _questions.length - 1
+                                        ? 'Finish Exam'
+                                        : 'Next')
+                                    : 'Submit Answer',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: (_isCurrentQuestionSubmitted ||
+                                          _hasSelectedAnswer)
+                                      ? Colors.white
+                                      : Colors.grey[500],
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -4752,115 +5576,155 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
     int totalQuestions = _questions.length;
     String? message;
 
+    double? parseNum(dynamic v) {
+      if (v is num) return v.toDouble();
+      return double.tryParse(v?.toString() ?? '');
+    }
+
     if (_examResult != null) {
-      score = (_examResult!['score'] as num?)?.toInt() ?? 0;
       passed = _examResult!['is_passed'] == true;
-      correctAnswers = _examResult!['correct_answers'] as int? ?? 0;
-      totalQuestions =
-          _examResult!['total_questions'] as int? ?? _questions.length;
+      correctAnswers = parseNum(_examResult!['correct_answers'])?.toInt() ?? 0;
+      totalQuestions = parseNum(_examResult!['total_questions'])?.toInt() ??
+          _questions.length;
       message = _examResult!['message']?.toString();
+
+      final percentageRaw = parseNum(_examResult!['percentage']);
+      final scoreRaw = parseNum(_examResult!['score']);
+      if (percentageRaw != null) {
+        score = percentageRaw.round();
+      } else if (scoreRaw != null) {
+        // Some backends return score as points earned, not percent.
+        if (totalQuestions > 0 && scoreRaw <= totalQuestions) {
+          score = ((scoreRaw / totalQuestions) * 100).round();
+        } else {
+          score = scoreRaw.round();
+        }
+      } else if (totalQuestions > 0) {
+        score = ((correctAnswers / totalQuestions) * 100).round();
+      } else {
+        score = 0;
+      }
     } else {
       // Fallback calculation (should not happen if API works)
       score = 0;
       passed = false;
     }
 
+    final normalizedMessage = message?.trim().toLowerCase() ?? '';
+    final fallbackEnglishMessage = passed ? 'Well done!' : 'Try again.';
+    final englishMessage = normalizedMessage.isEmpty
+        ? fallbackEnglishMessage
+        : (normalizedMessage.contains('pass') ||
+                normalizedMessage.contains('congrat') ||
+                normalizedMessage.contains('success') ||
+                normalizedMessage.contains('excellent') ||
+                normalizedMessage.contains('great'))
+            ? 'Congratulations'
+            : (normalizedMessage.contains('fail') ||
+                    normalizedMessage.contains('retry') ||
+                    normalizedMessage.contains('try again'))
+                ? 'You did not pass this time. Please try again.'
+                : fallbackEnglishMessage;
+
     return Scaffold(
       backgroundColor: AppColors.beige,
       body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: passed
-                        ? const Color(0xFF10B981)
-                        : const Color(0xFFF97316),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    passed ? Icons.emoji_events_rounded : Icons.refresh_rounded,
-                    size: 60,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  message ??
-                      (passed
-                          ? AppLocalizations.of(context)!.wellDone
-                          : AppLocalizations.of(context)!.tryAgain),
-                  style: GoogleFonts.cairo(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.foreground,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  AppLocalizations.of(context)!.yourScore(score),
-                  style: GoogleFonts.cairo(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: passed
-                        ? const Color(0xFF10B981)
-                        : const Color(0xFFF97316),
-                  ),
-                ),
-                Text(
-                  AppLocalizations.of(context)!.correctAnswersOutOf(
-                    correctAnswers,
-                    totalQuestions,
-                  ),
-                  style: GoogleFonts.cairo(
-                    fontSize: 16,
-                    color: AppColors.mutedForeground,
-                  ),
-                ),
-                if (_examResult != null &&
-                    _examResult!['time_taken_minutes'] != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    AppLocalizations.of(context)!.timeTakenMinutes(
-                      (_examResult!['time_taken_minutes'] as num?)?.toInt() ??
-                          0,
-                    ),
-                    style: GoogleFonts.cairo(
-                      fontSize: 14,
-                      color: AppColors.mutedForeground,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 40),
-                GestureDetector(
-                  onTap: () => Navigator.pop(context, _examResult),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [Color(0xFF0C52B3), Color(0xFF093F8A)]),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Center(
-                      child: Text(
-                        AppLocalizations.of(context)!.finish,
-                        style: GoogleFonts.cairo(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight - 32,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: passed
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFFF97316),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          passed
+                              ? Icons.emoji_events_rounded
+                              : Icons.refresh_rounded,
+                          size: 60,
                           color: Colors.white,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 20),
+                      Text(
+                        englishMessage,
+                        style: GoogleFonts.cairo(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.foreground,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Your score: $score%',
+                        style: GoogleFonts.cairo(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: passed
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFFF97316),
+                        ),
+                      ),
+                      Text(
+                        'Correct answers: $correctAnswers out of $totalQuestions',
+                        style: GoogleFonts.cairo(
+                          fontSize: 15,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                      if (_examResult != null &&
+                          _examResult!['time_taken_minutes'] != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Time taken: ${(_examResult!["time_taken_minutes"] as num?)?.toInt() ?? 0} minutes',
+                          style: GoogleFonts.cairo(
+                            fontSize: 14,
+                            color: AppColors.mutedForeground,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context, _examResult),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                                colors: [Color(0xFF0C52B3), Color(0xFF093F8A)]),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Center(
+                            child: Text(
+                              'Finish',
+                              style: GoogleFonts.cairo(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),

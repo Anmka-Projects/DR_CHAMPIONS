@@ -110,6 +110,41 @@ class ExamsService {
     }
   }
 
+  /// Submit single question answer during an active exam attempt.
+  Future<Map<String, dynamic>> submitExamQuestion(
+    String courseId,
+    String examId, {
+    required String attemptId,
+    required String questionId,
+    required String? answer,
+    required List<String> selectedOptions,
+    required String? answerText,
+  }) async {
+    try {
+      final response = await ApiClient.instance.post(
+        ApiEndpoints.courseExamQuestionSubmit(
+          courseId,
+          examId,
+          attemptId,
+          questionId,
+        ),
+        body: {
+          'answer': answer,
+          'selected_options': selectedOptions,
+          'answer_text': answerText,
+        },
+        requireAuth: true,
+      );
+
+      if (response['success'] == true && response['data'] != null) {
+        return Map<String, dynamic>.from(response['data'] as Map);
+      }
+      throw Exception(response['message'] ?? 'Failed to submit question');
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   /// Get user exams
   Future<Map<String, dynamic>> getMyExams() async {
     try {

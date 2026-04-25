@@ -90,6 +90,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   bool _isLoadingContent = true;
   bool _useWebViewFallback = false;
   bool _isVimeoVideo = false;
+  bool _isYouTubeVideo = false;
+  bool _showVideoOverlayButtons = true;
   String? _vimeoId;
   String? _vimeoHash;
   Map<String, dynamic>? _lessonContent;
@@ -119,8 +121,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   bool _isVimeoFullscreenActive = false;
   int _vimeoLastPositionSeconds = 0;
   String? _lastLoadedVimeoEmbedUrl;
-  final PageController _heroImagePageController = PageController();
-  int _heroImageIndex = 0;
 
   /// Avoid feedback when pausing the other player from exclusivity hooks.
   bool _silencingOtherPlayback = false;
@@ -138,8 +138,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   String? _openLessonPanel;
   bool _lessonAccordionUserInteracted = false;
   String? _activePdfUrl;
-  WebViewController? _pdfWebViewController;
-  bool _isPdfLoading = false;
   bool _isLoadingLessonExams = false;
   List<Map<String, dynamic>> _lessonExams = [];
   String? _startingLessonExamId;
@@ -167,14 +165,23 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final oldId = oldWidget.lesson?['id']?.toString();
     final newId = widget.lesson?['id']?.toString();
     if (oldId != newId) {
-      _openLessonPanel = null;
-      _lessonAccordionUserInteracted = false;
-      _heroImageIndex = 0;
-      if (_heroImagePageController.hasClients) {
-        _heroImagePageController.jumpToPage(0);
-      }
+      setState(() {
+        _openLessonPanel = null;
+        _lessonAccordionUserInteracted = false;
+        _lessonExams = [];
+        _isLoadingLessonExams = false;
+      });
       unawaited(_pausePlaybackOnLessonChange());
+      unawaited(_reloadForNewLesson());
     }
+  }
+
+  Future<void> _reloadForNewLesson() async {
+    await _loadLessonContent();
+    if (!mounted) return;
+    _initializeVideo();
+    _startProgressTracking();
+    _checkIfDownloaded();
   }
 
   String _defaultLessonAccordionPanelId() => _lessonPanelDescription;
@@ -713,11 +720,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             onTap: () {
               if (forAccordion) {
                 _toggleLessonPanel(_lessonPanelImages);
-                setState(() => _heroImageIndex = index);
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!_heroImagePageController.hasClients) return;
-                  _heroImagePageController.jumpToPage(index);
-                });
                 return;
               }
               showDialog<void>(
@@ -1004,7 +1006,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (lesson == null) return;
 
     String? courseId = widget.courseId;
-    courseId ??= lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
+    courseId ??=
+        lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
     final lessonId = lesson['id']?.toString();
     if (courseId == null ||
         courseId.isEmpty ||
@@ -1029,21 +1032,28 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       );
       if (!mounted) return;
       setState(() {
-        _lessonExams = exams
-            .map((e) => Map<String, dynamic>.from(e))
-            .where((e) {
-              final targetType =
-                  e['target_type']?.toString().toLowerCase().trim() ??
-                      e['targetType']?.toString().toLowerCase().trim() ??
-                      '';
-              if (targetType == 'lesson') return true;
-              final examLessonId =
-                  e['lesson_id']?.toString() ?? e['lessonId']?.toString();
-              return examLessonId != null &&
+        _lessonExams =
+            exams.map((e) => Map<String, dynamic>.from(e)).where((e) {
+          final targetType =
+              e['target_type']?.toString().toLowerCase().trim() ??
+                  e['targetType']?.toString().toLowerCase().trim() ??
+                  '';
+          final examLessonId =
+              e['lesson_id']?.toString() ?? e['lessonId']?.toString();
+          final examTargetId =
+              e['target_id']?.toString() ?? e['targetId']?.toString();
+          final matchesLessonId = (examLessonId != null &&
                   examLessonId.isNotEmpty &&
-                  examLessonId == lessonId;
-            })
-            .toList();
+                  examLessonId == lessonId) ||
+              (examTargetId != null &&
+                  examTargetId.isNotEmpty &&
+                  examTargetId == lessonId);
+          if (targetType == 'lesson') {
+            // Strictly keep lesson exams bound to current lesson only.
+            return matchesLessonId;
+          }
+          return matchesLessonId;
+        }).toList();
         _isLoadingLessonExams = false;
       });
     } catch (_) {
@@ -1055,19 +1065,67 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     }
   }
 
+  bool _lessonExamCanStart(Map<String, dynamic> exam) {
+    final backendCanStart = exam['can_start'];
+    if (backendCanStart is bool && backendCanStart == false) return false;
+
+    final attemptsRemainingRaw = exam['attempts_remaining'];
+    final attemptsRemaining = attemptsRemainingRaw is int
+        ? attemptsRemainingRaw
+        : (attemptsRemainingRaw is num
+            ? attemptsRemainingRaw.toInt()
+            : int.tryParse(attemptsRemainingRaw?.toString() ?? ''));
+    if (attemptsRemaining != null) return attemptsRemaining > 0;
+
+    final maxAttemptsRaw = exam['max_attempts'];
+    final maxAttempts = maxAttemptsRaw is int
+        ? maxAttemptsRaw
+        : (maxAttemptsRaw is num
+            ? maxAttemptsRaw.toInt()
+            : int.tryParse(maxAttemptsRaw?.toString() ?? ''));
+    final attemptsUsedRaw = exam['attempts_used'];
+    final attemptsUsed = attemptsUsedRaw is int
+        ? attemptsUsedRaw
+        : (attemptsUsedRaw is num
+            ? attemptsUsedRaw.toInt()
+            : int.tryParse(attemptsUsedRaw?.toString() ?? '')) ??
+            0;
+    if (maxAttempts != null && maxAttempts > 0) {
+      return attemptsUsed < maxAttempts;
+    }
+
+    return backendCanStart == true || backendCanStart == null;
+  }
+
   Future<void> _startLessonExam(Map<String, dynamic> examData) async {
     final examId = examData['id']?.toString() ?? '';
     if (examId.isEmpty) return;
+    if (!_lessonExamCanStart(examData)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No attempts remaining for this exam.',
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
 
     final lesson = widget.lesson;
     if (lesson == null) return;
     String? courseId = widget.courseId;
-    courseId ??= lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
+    courseId ??=
+        lesson['course_id']?.toString() ?? lesson['courseId']?.toString();
     if (courseId == null || courseId.isEmpty) return;
 
     try {
       setState(() => _startingLessonExamId = examId);
-      final examSession = await ExamsService.instance.startExam(courseId, examId);
+      final examSession =
+          await ExamsService.instance.startExam(courseId, examId);
       final questions = examSession['questions'] as List?;
       final attemptId = examSession['attempt_id']?.toString();
       if (questions == null || questions.isEmpty) {
@@ -1091,9 +1149,10 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             examId: examId,
             courseId: courseId!,
             attemptId: attemptId,
-            courseName: (widget.lesson?['title']?.toString().isNotEmpty ?? false)
-                ? widget.lesson!['title'].toString()
-                : AppLocalizations.of(context)!.course,
+            courseName:
+                (widget.lesson?['title']?.toString().isNotEmpty ?? false)
+                    ? widget.lesson!['title'].toString()
+                    : AppLocalizations.of(context)!.course,
             examData: examData,
             examSession: examSession,
           ),
@@ -1162,8 +1221,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             : (Localizations.localeOf(context).languageCode == 'ar'
                 ? 'امتحان الدرس'
                 : 'Lesson exam');
-        final canStart = exam['can_start'] == true;
+        final canStart = _lessonExamCanStart(exam);
         final isStarting = _startingLessonExamId == examId;
+        final isEnabled = canStart && !isStarting;
         final duration = exam['duration_minutes'];
         final questions = exam['questions_count'];
         final lessonName = exam['lesson_name']?.toString();
@@ -1244,11 +1304,11 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     ),
                   const Spacer(),
                   FilledButton(
-                    onPressed: (!canStart || isStarting)
-                        ? null
-                        : () => _startLessonExam(exam),
+                    onPressed: isEnabled ? () => _startLessonExam(exam) : null,
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.purple,
+                      disabledBackgroundColor: Colors.grey.shade300,
+                      disabledForegroundColor: Colors.grey.shade600,
                       minimumSize: const Size(92, 36),
                     ),
                     child: isStarting
@@ -1261,7 +1321,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                             ),
                           )
                         : Text(
-                            AppLocalizations.of(context)!.startExam,
+                            canStart
+                                ? AppLocalizations.of(context)!.startExam
+                                : (Localizations.localeOf(context)
+                                            .languageCode ==
+                                        'ar'
+                                    ? 'غير متاح'
+                                    : 'Unavailable'),
                             style: GoogleFonts.cairo(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -1280,7 +1346,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   List<String> _collectAllAudioUrls() {
     final urls = <String>{};
     void addIfValid(dynamic v) {
-      final s = v?.toString().trim();
+      final s = _extractUrlFromAny(v) ?? v?.toString().trim();
       if (s == null || s.isEmpty) return;
       if (s.startsWith('http://') || s.startsWith('https://')) {
         urls.add(s);
@@ -1319,7 +1385,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   List<String> _collectAllPdfUrls() {
     final urls = <String>{};
     void addIfValid(dynamic v) {
-      final s = v?.toString().trim();
+      final s = _extractUrlFromAny(v) ?? v?.toString().trim();
       if (s == null || s.isEmpty) return;
       if (s.startsWith('http://') || s.startsWith('https://')) {
         urls.add(s);
@@ -1356,7 +1422,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
     void addIfValid(String? s) {
       if (s == null || s.isEmpty) return;
-      final cleaned = _cleanVideoUrl(s);
+      final source = _extractUrlFromAny(s) ?? s;
+      final cleaned = _cleanVideoUrl(source);
       if (cleaned != null && cleaned.isNotEmpty && seen.add(cleaned)) {
         urls.add(cleaned);
       }
@@ -1371,13 +1438,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final contentVideos = _lessonContent?['videos'];
     if (contentVideos is List) {
       for (final u in contentVideos) {
-        addIfValid(u?.toString());
+        addIfValid(_extractUrlFromAny(u) ?? u?.toString());
       }
     }
     final lessonVideos = widget.lesson?['videos'];
     if (lessonVideos is List) {
       for (final u in lessonVideos) {
-        addIfValid(u?.toString());
+        addIfValid(_extractUrlFromAny(u) ?? u?.toString());
       }
     }
     return urls;
@@ -1417,6 +1484,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final videoUrl = _allVideoUrls[index];
 
     if (videoUrl.contains('youtube.com') || videoUrl.contains('youtu.be')) {
+      _isYouTubeVideo = true;
       _controller = PodPlayerController(
         playVideoFrom: PlayVideoFrom.youtube(videoUrl),
         podPlayerConfig: const PodPlayerConfig(
@@ -1429,6 +1497,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           if (mounted) setState(() => _isVideoLoading = false);
         });
     } else if (videoUrl.toLowerCase().contains('vimeo.com')) {
+      _isYouTubeVideo = false;
       final extracted = _extractVimeoId(videoUrl);
       if (extracted != null) {
         setState(() {
@@ -1449,6 +1518,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         _initializeDirectVideo(videoUrl);
       }
     } else {
+      _isYouTubeVideo = false;
       _isVimeoVideo = false;
       _vimeoId = null;
       _vimeoHash = null;
@@ -1651,7 +1721,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         : '';
     final startAt = (startAtSeconds ?? 0);
     final startFragment = startAt > 0 ? '#t=${startAt}s' : '';
-    return 'https://player.vimeo.com/video/$id?autoplay=1&playsinline=1&title=0&byline=0&portrait=0$hashPart$startFragment';
+    return 'https://player.vimeo.com/video/$id?autoplay=1&muted=0&background=0&playsinline=1&title=0&byline=0&portrait=0$hashPart$startFragment';
   }
 
   Future<int> _readVimeoCurrentSeconds() async {
@@ -1811,6 +1881,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       }
       if (mounted) {
         setState(() {
+          _isYouTubeVideo = false;
           _isVimeoVideo = true;
           _vimeoId = vimeoId;
           _vimeoHash = _extractVimeoHash(videoUrl);
@@ -1823,6 +1894,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     try {
       if (mounted) {
         setState(() {
+          _isYouTubeVideo = false;
           _isVimeoVideo = false;
           _vimeoId = null;
           _vimeoHash = null;
@@ -1833,6 +1905,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       if (videoUrl != null && videoUrl.isNotEmpty) {
         // Check if it's a YouTube URL
         if (videoUrl.contains('youtube.com') || videoUrl.contains('youtu.be')) {
+          _isYouTubeVideo = true;
           final youtubeSource = _buildYoutubeSourceFromIdOrUrl(videoUrl);
           if (youtubeSource == null) {
             if (kDebugMode) {
@@ -1860,6 +1933,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
               _setVideoUnavailableState();
             });
         } else {
+          _isYouTubeVideo = false;
           // Direct video URL from server - use pod_player with network
           if (kDebugMode) {
             print('📹 Using pod_player for direct video URL: $videoUrl');
@@ -1867,6 +1941,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _initializeDirectVideo(videoUrl);
         }
       } else if (videoId.isNotEmpty) {
+        _isYouTubeVideo = true;
         // Fallback to YouTube ID
         final youtubeSource = _buildYoutubeSourceFromIdOrUrl(videoId);
         if (youtubeSource == null) {
@@ -1895,6 +1970,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             _setVideoUnavailableState();
           });
       } else {
+        _isYouTubeVideo = false;
         // No valid video source
         if (kDebugMode) {
           print('⚠️ No valid video source found');
@@ -1968,6 +2044,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   /// Initialize direct video playback using pod_player
   Future<void> _initializeDirectVideo(String videoUrl) async {
     try {
+      _isYouTubeVideo = false;
       if (kDebugMode) {
         print('📹 Initializing direct video with pod_player: $videoUrl');
       }
@@ -2484,7 +2561,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     _progressTimer?.cancel();
     _controller?.dispose();
     _audioPlayer?.dispose();
-    _heroImagePageController.dispose();
     // Clean up temporary video file
     if (_tempVideoFile != null) {
       try {
@@ -2761,22 +2837,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 
   Widget _buildHeroImages(Map<String, dynamic> lesson, List<String> imageUrls) {
-    final totalImages = imageUrls.length;
-    final currentIndex = totalImages == 0
-        ? 0
-        : _heroImageIndex.clamp(0, totalImages - 1).toInt();
-    final canGoPrev = currentIndex > 0;
-    final canGoNext = totalImages > 1 && currentIndex < totalImages - 1;
-
-    void animateToImage(int index) {
-      if (!_heroImagePageController.hasClients) return;
-      _heroImagePageController.animateToPage(
-        index,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-      );
-    }
-
     return Container(
       color: Colors.black,
       child: Column(
@@ -2784,7 +2844,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           _buildHeroTopBar(
             lesson,
             trailing: [
-              if (totalImages > 0)
+              if (imageUrls.isNotEmpty)
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -2793,7 +2853,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    '${currentIndex + 1} / $totalImages',
+                    '${imageUrls.length}',
                     style: GoogleFonts.cairo(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -2805,166 +2865,72 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           ),
           SizedBox(
             height: 220,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Container(color: const Color(0xFFF8F9FC)),
-                PageView.builder(
-                  key: ValueKey(totalImages),
-                  controller: _heroImagePageController,
-                  itemCount: totalImages,
-                  physics: const BouncingScrollPhysics(),
-                  onPageChanged: (index) {
-                    if (!mounted) return;
-                    setState(() => _heroImageIndex = index);
-                  },
-                  itemBuilder: (context, index) {
-                    final imageUrl = imageUrls[index];
-                    return GestureDetector(
-                      onTap: () {
-                        showDialog<void>(
-                          context: context,
-                          builder: (context) => _LessonImagesViewerDialog(
-                            urls: imageUrls,
-                            initialIndex: index,
-                          ),
-                        );
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 10,
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: Image.network(
-                            imageUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              color: Colors.grey[200],
-                              child: const Icon(
-                                Icons.broken_image_rounded,
-                                color: AppColors.mutedForeground,
-                                size: 28,
-                              ),
-                            ),
-                            loadingBuilder: (context, child, progress) {
-                              if (progress == null) return child;
-                              return Container(
-                                color: Colors.grey[100],
-                                child: const Center(
-                                  child: SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                if (totalImages > 1)
-                  Positioned(
-                    left: 10,
-                    right: 10,
-                    bottom: 10,
-                    child: Row(
-                      children: [
-                        _buildHeroImageNavButton(
-                          icon: Icons.chevron_left_rounded,
-                          enabled: canGoPrev,
-                          onTap: canGoPrev
-                              ? () => animateToImage(currentIndex - 1)
-                              : null,
-                        ),
-                        const Spacer(),
-                        Expanded(
-                          flex: 6,
-                          child: Center(
-                            child: Wrap(
-                              alignment: WrapAlignment.center,
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: List.generate(totalImages, (i) {
-                                final active = i == currentIndex;
-                                return AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  width: active ? 18 : 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: active
-                                        ? Colors.white
-                                        : Colors.white.withValues(alpha: 0.45),
-                                    borderRadius: BorderRadius.circular(99),
-                                  ),
-                                );
-                              }),
-                            ),
-                          ),
-                        ),
-                        const Spacer(),
-                        _buildHeroImageNavButton(
-                          icon: Icons.chevron_right_rounded,
-                          enabled: canGoNext,
-                          onTap: canGoNext
-                              ? () => animateToImage(currentIndex + 1)
-                              : null,
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeroImageNavButton({
-    required IconData icon,
-    required bool enabled,
-    required VoidCallback? onTap,
-  }) {
-    return Material(
-      color: Colors.black.withValues(alpha: enabled ? 0.42 : 0.22),
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: SizedBox(
-          width: 34,
-          height: 34,
-          child: Icon(
-            icon,
-            color: enabled ? Colors.white : Colors.white54,
-            size: 22,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeroDownload(Map<String, dynamic> lesson) {
-    return Container(
-      color: Colors.black,
-      child: Column(
-        children: [
-          _buildHeroTopBar(lesson),
-          SizedBox(
-            height: 220,
             child: Container(
               color: const Color(0xFFF8F9FC),
-              padding: const EdgeInsets.all(16),
-              child: Center(
-                child: SingleChildScrollView(
-                  child: _buildDownloadSectionBody(),
+              padding: const EdgeInsets.all(10),
+              child: GridView.builder(
+                physics: const BouncingScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 1,
                 ),
+                itemCount: imageUrls.length,
+                itemBuilder: (context, index) {
+                  final imageUrl = imageUrls[index];
+                  return GestureDetector(
+                    onTap: () {
+                      showDialog<void>(
+                        context: context,
+                        builder: (context) => _LessonImagesViewerDialog(
+                          urls: imageUrls,
+                          initialIndex: index,
+                        ),
+                      );
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.grey.shade300,
+                          width: 1.2,
+                        ),
+                      ),
+                      padding: const EdgeInsets.all(2),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: Colors.grey[200],
+                            child: const Icon(
+                              Icons.broken_image_rounded,
+                              color: AppColors.mutedForeground,
+                              size: 24,
+                            ),
+                          ),
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              color: Colors.grey[100],
+                              child: const Center(
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -3003,7 +2969,6 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   Widget _buildVideoSection(Map<String, dynamic> lesson) {
     final heroPanel = _activeHeroPanel();
     final imageUrls = _collectLessonImageUrls();
-    final pdfUrls = _collectAllPdfUrls();
 
     if (heroPanel == _lessonPanelDescription) {
       return _buildHeroDescription(lesson);
@@ -3014,16 +2979,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (heroPanel == _lessonPanelAudio && _allAudioUrls.isNotEmpty) {
       return _buildAudioPlayer();
     }
-    if (heroPanel == _lessonPanelPdfs && pdfUrls.isNotEmpty) {
-      final selectedPdf =
-          (pdfUrls.contains(_activePdfUrl)) ? _activePdfUrl! : pdfUrls.first;
-      return _buildInlinePdfViewer(lesson, selectedPdf);
-    }
-    if (heroPanel == _lessonPanelDownload) {
-      return _buildHeroDownload(lesson);
-    }
     if (heroPanel == _lessonPanelFiles) {
       return _buildHeroFiles(lesson);
+    }
+
+    // If there is no playable video source, use lesson images as
+    // the primary hero content in gallery mode.
+    if (!_hasAnyVideoSource() && imageUrls.isNotEmpty) {
+      return _buildHeroImages(lesson, imageUrls);
     }
 
     if (_isAudioLesson) return _buildAudioPlayer();
@@ -3045,6 +3008,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       overflow: hidden;
       background: #000;
       position: relative;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
     iframe {
       position: fixed;
@@ -3056,7 +3022,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       pointer-events: auto;
     }
     .menu-hit-blocker-left,
-    .vimeo-top-actions-hit-blocker {
+    .vimeo-top-actions-hit-blocker,
+    .vimeo-settings-hit-blocker {
       position: fixed;
       z-index: 3;
       background: transparent;
@@ -3076,6 +3043,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       width: 170px;
       height: 88px;
     }
+    .vimeo-settings-hit-blocker {
+      right: 0;
+      bottom: 0;
+      width: 180px;
+      height: 92px;
+      border-radius: 999px;
+      z-index: 9999;
+    }
   </style>
 </head>
 <body>
@@ -3086,10 +3061,28 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   </iframe>
   <div class="menu-hit-blocker-left"></div>
   <div class="vimeo-top-actions-hit-blocker"></div>
+  <div class="vimeo-settings-hit-blocker"></div>
   <script>
+    // Security hardening: block long-press/context menu inside WebView.
+    document.addEventListener('contextmenu', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('selectstart', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('dragstart', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('touchstart', function () {}, { passive: true });
     const iframe = document.getElementById('vimeoPlayer');
     const player = new Vimeo.Player(iframe);
     window.vimeoLastTime = ${_vimeoLastPositionSeconds};
+    player.ready().then(async () => {
+      try {
+        await player.setVolume(1);
+        await player.setMuted(false);
+      } catch (_) {}
+    });
+    player.on('play', async function () {
+      try {
+        await player.setVolume(1);
+        await player.setMuted(false);
+      } catch (_) {}
+    });
     player.on('timeupdate', function (data) {
       try {
         const sec = Math.max(0, Math.floor((data && data.seconds) || 0));
@@ -3130,7 +3123,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                   return NavigationDecision.navigate;
                 }
                 if (kDebugMode) {
-                  print('🔒 Blocked Vimeo top-level navigation: ${request.url}');
+                  print(
+                      '🔒 Blocked Vimeo top-level navigation: ${request.url}');
                 }
                 return NavigationDecision.prevent;
               },
@@ -3266,58 +3260,58 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                             : _useWebViewFallback && _webViewController != null
                                 ? WebViewWidget(controller: _webViewController!)
                                 : Container(
-                                        color: Colors.black,
-                                        child: Stack(
-                                          fit: StackFit.expand,
-                                          children: [
-                                            Image.asset(
-                                              'assets/images/videoNotFound.png',
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (_, __, ___) =>
-                                                  Container(
-                                                color: Colors.black,
-                                                alignment: Alignment.center,
-                                                child: const Icon(
-                                                  Icons.ondemand_video_rounded,
-                                                  color: Colors.white70,
-                                                  size: 34,
-                                                ),
-                                              ),
+                                    color: Colors.black,
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        Image.asset(
+                                          'assets/images/videoNotFound.png',
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              Container(
+                                            color: Colors.black,
+                                            alignment: Alignment.center,
+                                            child: const Icon(
+                                              Icons.ondemand_video_rounded,
+                                              color: Colors.white70,
+                                              size: 34,
                                             ),
-                                            Container(
-                                              decoration: BoxDecoration(
-                                                gradient: LinearGradient(
-                                                  begin: Alignment.topCenter,
-                                                  end: Alignment.bottomCenter,
-                                                  colors: [
-                                                    Colors.black.withValues(
-                                                        alpha: 0.08),
-                                                    Colors.black.withValues(
-                                                        alpha: 0.45),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                            Align(
-                                              alignment: Alignment.bottomCenter,
-                                              child: Padding(
-                                                padding: const EdgeInsets.only(
-                                                    bottom: 14),
-                                                child: Text(
-                                                  AppLocalizations.of(context)!
-                                                      .noVideoUrlToDownload,
-                                                  style: GoogleFonts.cairo(
-                                                    color: Colors.white,
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                  textAlign: TextAlign.center,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
+                                          ),
                                         ),
-                                      ),
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topCenter,
+                                              end: Alignment.bottomCenter,
+                                              colors: [
+                                                Colors.black
+                                                    .withValues(alpha: 0.08),
+                                                Colors.black
+                                                    .withValues(alpha: 0.45),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        Align(
+                                          alignment: Alignment.bottomCenter,
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                                bottom: 14),
+                                            child: Text(
+                                              AppLocalizations.of(context)!
+                                                  .noVideoUrlToDownload,
+                                              style: GoogleFonts.cairo(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                 if (_controller == null)
                   IgnorePointer(child: _buildVideoWatermarkOverlay()),
                 if (!_isVideoLoading &&
@@ -3348,57 +3342,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     );
   }
 
-  Widget _buildInlinePdfViewer(Map<String, dynamic> lesson, String pdfUrl) {
-    if (_activePdfUrl != pdfUrl || _pdfWebViewController == null) {
-      _activePdfUrl = pdfUrl;
-      _isPdfLoading = true;
-      _pdfWebViewController = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.black)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (_) {
-              if (!mounted) return;
-              setState(() => _isPdfLoading = false);
-            },
-            onWebResourceError: (_) {
-              if (!mounted) return;
-              setState(() => _isPdfLoading = false);
-            },
-          ),
-        )
-        ..loadRequest(Uri.parse(pdfUrl));
-    }
-
-    return Container(
-      color: Colors.black,
-      child: Column(
-        children: [
-          _buildHeroTopBar(lesson),
-          SizedBox(
-            height: 220,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (_pdfWebViewController != null)
-                  WebViewWidget(controller: _pdfWebViewController!),
-                if (_isPdfLoading)
-                  Container(
-                    color: Colors.black,
-                    child: const Center(
-                      child: CircularProgressIndicator(color: AppColors.purple),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildCustomPodOverlay(OverLayOptions options) {
     final showOverlay = options.isOverlayVisible;
+    final showControls = showOverlay && _showVideoOverlayButtons;
     final media = MediaQuery.of(context);
     final isLandscape = media.orientation == Orientation.landscape;
     final isFullscreen = options.isFullScreen == true;
@@ -3406,25 +3352,26 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Single tap: play/pause (no onDoubleTap here — it delays the first tap).
+        // Single tap: show/hide controls only (play/pause via button below).
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {
             final c = _controller;
             if (c == null) return;
             try {
-              if (c.isVideoPlaying) {
-                c.pause();
+              final next = !_showVideoOverlayButtons;
+              if (mounted) {
+                setState(() => _showVideoOverlayButtons = next);
               } else {
-                c.play();
+                _showVideoOverlayButtons = next;
               }
-              c.showOverlay();
+              if (next) c.showOverlay();
               if (mounted) setState(() {});
             } catch (_) {}
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
-            color: showOverlay
+            color: showControls
                 ? Colors.black.withValues(alpha: 0.20)
                 : Colors.transparent,
           ),
@@ -3455,32 +3402,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             ),
           ),
         ),
-        // Pause glyph while paused only; fades out when playing (taps use layer below).
-        Positioned.fill(
-          child: IgnorePointer(
-            child: AnimatedOpacity(
-              opacity:
-                  options.podVideoState == PodVideoState.paused ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut,
-              child: Center(
-                child: Icon(
-                  Icons.pause_circle_filled_rounded,
-                  size: 88,
-                  color: Colors.white.withValues(alpha: 0.92),
-                  shadows: const [
-                    Shadow(
-                      blurRadius: 14,
-                      offset: Offset(0, 2),
-                      color: Colors.black54,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (showOverlay) ...[
+        if (showControls) ...[
           Positioned(
             top: 8,
             right: 8,
@@ -3507,6 +3429,50 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                Material(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(24),
+                  child: IconButton(
+                    tooltip: options.podVideoState == PodVideoState.paused
+                        ? 'Play'
+                        : 'Pause',
+                    icon: Icon(
+                      options.podVideoState == PodVideoState.paused
+                          ? Icons.play_arrow_rounded
+                          : Icons.pause_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                    onPressed: () {
+                      final c = _controller;
+                      if (c == null) return;
+                      try {
+                        if (c.isVideoPlaying) {
+                          c.pause();
+                        } else {
+                          c.play();
+                        }
+                        c.showOverlay();
+                        if (mounted) setState(() {});
+                      } catch (_) {}
+                    },
+                  ),
+                ),
+                const SizedBox(width: 6),
+                if (_isYouTubeVideo) ...[
+                  _buildQuickSeekButton(
+                    icon: Icons.replay_10_rounded,
+                    onPressed: () =>
+                        _seekYoutubeBy(const Duration(seconds: -10)),
+                  ),
+                  const SizedBox(width: 10),
+                  _buildQuickSeekButton(
+                    icon: Icons.forward_10_rounded,
+                    onPressed: () =>
+                        _seekYoutubeBy(const Duration(seconds: 10)),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 if (isLandscape || isFullscreen)
                   Material(
                     color: Colors.black.withValues(alpha: 0.35),
@@ -3526,6 +3492,58 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         ],
       ],
     );
+  }
+
+  Widget _buildQuickSeekButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.42),
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _seekYoutubeBy(Duration delta) async {
+    if (!_isYouTubeVideo) return;
+    final c = _controller;
+    if (c == null) return;
+    try {
+      final inner = Get.find<PodGetXVideoController>(tag: c.getTag);
+      final videoCtr = inner.videoCtr;
+      final value = videoCtr?.value;
+      if (videoCtr == null || value == null) return;
+
+      final current = value.position;
+      final total = value.duration;
+      var target = current + delta;
+      if (target < Duration.zero) target = Duration.zero;
+      if (total > Duration.zero && target > total) {
+        target = total - const Duration(milliseconds: 250);
+        if (target < Duration.zero) target = Duration.zero;
+      }
+
+      await videoCtr.seekTo(target);
+      // Force an immediate + short delayed repaint so progress bar
+      // stays visually in sync with quick seek controls.
+      if (mounted) setState(() {});
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      if (mounted) setState(() {});
+      c.showOverlay();
+    } catch (e) {
+      if (kDebugMode) {
+        print('YouTube quick seek failed: $e');
+      }
+    }
   }
 
   Future<void> _openVideoFullscreen() async {
@@ -3944,7 +3962,12 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
   Widget _buildAudioTrackItem(int index, String url, bool isCurrent,
       bool isPlaying, String Function(Duration) formatDur) {
-    final name = _fileNameFromUrl(url);
+    final name = _displayNameForIndexedUrl(
+      url,
+      kind: 'audio',
+      index: index,
+      fallback: 'Audio ${index + 1}',
+    );
     return GestureDetector(
       onTap: () => _switchAudioTrack(index),
       child: Container(
@@ -4107,7 +4130,12 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 
   Widget _buildVideoTrackItem(int index, String url, bool isCurrent) {
-    final name = _fileNameFromUrl(url);
+    final name = _displayNameForIndexedUrl(
+      url,
+      kind: 'video',
+      index: index,
+      fallback: 'Video ${index + 1}',
+    );
     return GestureDetector(
       onTap: () => _switchVideoTrack(index),
       child: Container(
@@ -4261,9 +4289,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 
   Widget _buildPdfItem(int index, String url) {
-    final name = _fileNameFromUrl(url);
-    final isActive =
-        _activePdfUrl == url && _activeHeroPanel() == _lessonPanelPdfs;
+    final name = _displayNameForIndexedUrl(
+      url,
+      kind: 'pdf',
+      index: index,
+      fallback: 'Document ${index + 1}',
+    );
+    final isActive = _activePdfUrl == url;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -4271,9 +4303,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         unawaited(_pauseLessonAudioPlayback());
         setState(() {
           _lessonAccordionUserInteracted = true;
-          _openLessonPanel = _lessonPanelPdfs;
           _activePdfUrl = url;
-          _isPdfLoading = true;
         });
         final normalizedPdfUrl = googleDriveDirectDownloadUrl(url) ?? url;
         context.push(
@@ -4711,6 +4741,277 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     return url.split('/').last.split('?').first;
   }
 
+  String? _fileNameFromQueryParams(String url) {
+    try {
+      final uri = Uri.parse(url);
+      const keys = [
+        'filename',
+        'file_name',
+        'file',
+        'name',
+        'title',
+        'download'
+      ];
+      for (final k in keys) {
+        final v = uri.queryParameters[k]?.trim();
+        if (v != null && v.isNotEmpty) return Uri.decodeComponent(v);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  bool _looksMachineGeneratedName(String name) {
+    final n = name.trim().toLowerCase();
+    if (n.isEmpty) return true;
+    final base = n.contains('.') ? n.substring(0, n.lastIndexOf('.')) : n;
+    if (base.length >= 14 && RegExp(r'^[a-z0-9_-]+$').hasMatch(base)) {
+      final hasLetters = RegExp(r'[a-z]').hasMatch(base);
+      final hasDigits = RegExp(r'\d').hasMatch(base);
+      if (hasLetters && hasDigits) return true;
+    }
+    if (RegExp(r'^[a-f0-9]{16,}$').hasMatch(base)) return true; // hash-like
+    return false;
+  }
+
+  String _prettyFileName(String raw) {
+    var name = raw.trim();
+    if (name.isEmpty) return name;
+    name = name.replaceAll('_', ' ').replaceAll('-', ' ');
+    name = name.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return name;
+  }
+
+  String? _nameFromParallelListKey(
+      Map<String, dynamic>? source, List<String> keys, int index) {
+    if (source == null || index < 0) return null;
+    for (final key in keys) {
+      final raw = source[key];
+      if (raw is! List || index >= raw.length) continue;
+      final item = raw[index];
+      String? value;
+      if (item is String) {
+        value = item.trim();
+      } else if (item is Map) {
+        final map = Map<String, dynamic>.from(item);
+        value = map['title']?.toString().trim() ??
+            map['name']?.toString().trim() ??
+            map['file_name']?.toString().trim() ??
+            map['label']?.toString().trim();
+      } else {
+        value = item?.toString().trim();
+      }
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  String? _displayNameFromParallelArrays({
+    required String kind,
+    required int index,
+  }) {
+    final keys = <String>[];
+    switch (kind) {
+      case 'pdf':
+        keys.addAll(
+            ['pdf_names', 'pdf_titles', 'pdf_labels', 'pdf_files_names']);
+        break;
+      case 'audio':
+        keys.addAll([
+          'audio_names',
+          'audio_titles',
+          'audio_labels',
+          'audio_files_names'
+        ]);
+        break;
+      case 'video':
+        keys.addAll([
+          'video_names',
+          'video_titles',
+          'video_labels',
+          'video_files_names'
+        ]);
+        break;
+      case 'drive':
+        keys.addAll([
+          'google_drive_names',
+          'google_drive_titles',
+          'drive_names',
+          'drive_titles'
+        ]);
+        break;
+      case 'file':
+        keys.addAll(
+            ['file_names', 'file_titles', 'files_names', 'files_titles']);
+        break;
+      default:
+        return null;
+    }
+    final fromContent = _nameFromParallelListKey(_lessonContent, keys, index);
+    final fromLesson = _nameFromParallelListKey(widget.lesson, keys, index);
+    final candidate = (fromContent ?? fromLesson)?.trim();
+    if (candidate == null || candidate.isEmpty) return null;
+    final pretty = _prettyFileName(candidate);
+    if (pretty.isEmpty || _looksMachineGeneratedName(pretty)) return null;
+    return pretty;
+  }
+
+  String _normalizeUrlForLookup(String url) {
+    final raw = url.trim();
+    if (raw.isEmpty) return raw;
+    try {
+      final uri = Uri.parse(raw);
+      final normalizedPath = uri.path.isEmpty ? '/' : uri.path;
+      return '${uri.scheme.toLowerCase()}://${uri.host.toLowerCase()}$normalizedPath';
+    } catch (_) {
+      return raw.split('?').first.trim();
+    }
+  }
+
+  String _urlLastSegmentKey(String url) {
+    final name = _fileNameFromUrl(url).trim().toLowerCase();
+    return name;
+  }
+
+  String? _extractUrlFromAny(dynamic value) {
+    if (value == null) return null;
+    if (value is String) {
+      final s = value.trim();
+      if (s.startsWith('http://') || s.startsWith('https://')) return s;
+      return null;
+    }
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      final urlKeys = [
+        'url',
+        'file_url',
+        'file_path',
+        'path',
+        'src',
+        'link',
+        'video_url',
+        'audio_url',
+        'pdf_url',
+        'google_drive_url',
+      ];
+      for (final key in urlKeys) {
+        final candidate = map[key]?.toString().trim();
+        if (candidate != null &&
+            candidate.isNotEmpty &&
+            (candidate.startsWith('http://') ||
+                candidate.startsWith('https://'))) {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  }
+
+  String? _extractDisplayNameFromAny(dynamic value) {
+    if (value is! Map) return null;
+    final map = Map<String, dynamic>.from(value);
+    final nameKeys = [
+      'title',
+      'name',
+      'file_name',
+      'filename',
+      'original_name',
+      'display_name',
+      'label',
+    ];
+    for (final key in nameKeys) {
+      final candidate = map[key]?.toString().trim();
+      if (candidate != null &&
+          candidate.isNotEmpty &&
+          candidate.toLowerCase() != 'google drive') {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  Map<String, String> _buildUrlDisplayNameIndex() {
+    final index = <String, String>{};
+
+    void addEntriesFromList(dynamic raw) {
+      if (raw is! List) return;
+      for (final entry in raw) {
+        final url = _extractUrlFromAny(entry);
+        if (url == null) continue;
+        final name = _extractDisplayNameFromAny(entry);
+        if (name == null || name.isEmpty) continue;
+        final key = _normalizeUrlForLookup(url);
+        index.putIfAbsent(key, () => name);
+        final lastSeg = _urlLastSegmentKey(url);
+        if (lastSeg.isNotEmpty) {
+          index.putIfAbsent('seg::$lastSeg', () => name);
+        }
+      }
+    }
+
+    addEntriesFromList(_lessonContent?['media']);
+    addEntriesFromList(widget.lesson?['media']);
+    addEntriesFromList(_lessonContent?['files']);
+    addEntriesFromList(widget.lesson?['files']);
+    addEntriesFromList(_lessonContent?['attachments']);
+    addEntriesFromList(widget.lesson?['attachments']);
+    addEntriesFromList(_lessonContent?['audio_urls']);
+    addEntriesFromList(widget.lesson?['audio_urls']);
+    addEntriesFromList(_lessonContent?['pdf_urls']);
+    addEntriesFromList(widget.lesson?['pdf_urls']);
+    addEntriesFromList(_lessonContent?['videos']);
+    addEntriesFromList(widget.lesson?['videos']);
+    addEntriesFromList(_lessonContent?['file_urls']);
+    addEntriesFromList(widget.lesson?['file_urls']);
+    addEntriesFromList(_lessonContent?['google_drive_links']);
+    addEntriesFromList(widget.lesson?['google_drive_links']);
+
+    return index;
+  }
+
+  String _displayNameForUrl(String url, {String? fallback}) {
+    final key = _normalizeUrlForLookup(url);
+    final index = _buildUrlDisplayNameIndex();
+    final fromIndex = index[key]?.trim();
+    if (fromIndex != null && fromIndex.isNotEmpty) {
+      final pretty = _prettyFileName(fromIndex);
+      if (pretty.isNotEmpty && !_looksMachineGeneratedName(pretty)) {
+        return pretty;
+      }
+    }
+    final fromSegment = index['seg::${_urlLastSegmentKey(url)}']?.trim();
+    if (fromSegment != null && fromSegment.isNotEmpty) {
+      final pretty = _prettyFileName(fromSegment);
+      if (pretty.isNotEmpty && !_looksMachineGeneratedName(pretty)) {
+        return pretty;
+      }
+    }
+    final fromQuery = _fileNameFromQueryParams(url)?.trim();
+    if (fromQuery != null && fromQuery.isNotEmpty) {
+      final pretty = _prettyFileName(fromQuery);
+      if (pretty.isNotEmpty) return pretty;
+    }
+    final fromUrl = _fileNameFromUrl(url).trim();
+    if (fromUrl.isNotEmpty) {
+      final pretty = _prettyFileName(fromUrl);
+      if (!_looksMachineGeneratedName(pretty)) return pretty;
+    }
+    return (fallback == null || fallback.trim().isEmpty)
+        ? 'File'
+        : fallback.trim();
+  }
+
+  String _displayNameForIndexedUrl(
+    String url, {
+    required String kind,
+    required int index,
+    required String fallback,
+  }) {
+    final fromParallel =
+        _displayNameFromParallelArrays(kind: kind, index: index);
+    if (fromParallel != null && fromParallel.isNotEmpty) return fromParallel;
+    return _displayNameForUrl(url, fallback: fallback);
+  }
+
   Widget _buildResourcesList() {
     final List<Map<String, dynamic>> resourceList = [];
 
@@ -4719,20 +5020,26 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final contentFileUrls = _lessonContent?['file_urls'];
     if (contentFileUrls is List) {
       for (final u in contentFileUrls) {
-        final s = u?.toString().trim() ?? '';
+        final s = _extractUrlFromAny(u) ?? u?.toString().trim() ?? '';
         if (s.isNotEmpty) fileUrlsSet.add(s);
       }
     }
     final lessonFileUrls = widget.lesson?['file_urls'];
     if (lessonFileUrls is List) {
       for (final u in lessonFileUrls) {
-        final s = u?.toString().trim() ?? '';
+        final s = _extractUrlFromAny(u) ?? u?.toString().trim() ?? '';
         if (s.isNotEmpty) fileUrlsSet.add(s);
       }
     }
+    var fileIndex = 0;
     for (final u in fileUrlsSet) {
       resourceList.add({
-        'title': _fileNameFromUrl(u),
+        'title': _displayNameForIndexedUrl(
+          u,
+          kind: 'file',
+          index: fileIndex++,
+          fallback: 'File',
+        ),
         'url': u,
         'type': 'file',
         'icon': Icons.insert_drive_file,
@@ -4744,20 +5051,26 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     final contentDriveLinks = _lessonContent?['google_drive_links'];
     if (contentDriveLinks is List) {
       for (final u in contentDriveLinks) {
-        final s = u?.toString().trim() ?? '';
+        final s = _extractUrlFromAny(u) ?? u?.toString().trim() ?? '';
         if (s.isNotEmpty) driveLinksSet.add(s);
       }
     }
     final lessonDriveLinks = widget.lesson?['google_drive_links'];
     if (lessonDriveLinks is List) {
       for (final u in lessonDriveLinks) {
-        final s = u?.toString().trim() ?? '';
+        final s = _extractUrlFromAny(u) ?? u?.toString().trim() ?? '';
         if (s.isNotEmpty) driveLinksSet.add(s);
       }
     }
+    var driveIndex = 0;
     for (final u in driveLinksSet) {
       resourceList.add({
-        'title': 'Google Drive',
+        'title': _displayNameForIndexedUrl(
+          u,
+          kind: 'drive',
+          index: driveIndex++,
+          fallback: 'Google Drive',
+        ),
         'url': u,
         'type': 'link',
         'icon': Icons.link_rounded,
@@ -5019,7 +5332,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   Widget _buildResourceItem(
       String title, String size, IconData icon, String url) {
     // Check if the resource is a PDF
-    final isPdf = resourceLooksLikePdf(url, title) || icon == Icons.picture_as_pdf;
+    final isPdf =
+        resourceLooksLikePdf(url, title) || icon == Icons.picture_as_pdf;
     final isDrive = isGoogleDriveUrl(url);
     final lowerUrl = url.toLowerCase();
     final isImage = lowerUrl.endsWith('.png') ||
@@ -5039,7 +5353,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
               if (isPdf) {
                 // Open PDF in viewer screen
-                final normalizedPdfUrl = googleDriveDirectDownloadUrl(url) ?? url;
+                final normalizedPdfUrl =
+                    googleDriveDirectDownloadUrl(url) ?? url;
                 context.push(
                   RouteNames.pdfViewer,
                   extra: {
@@ -5048,8 +5363,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                   },
                 );
               } else if (isDrive) {
-                final embeddedUrl =
-                    googleDriveFilePreviewUrl(url) ?? googleDriveFolderEmbedUrl(url) ?? url;
+                final embeddedUrl = googleDriveFilePreviewUrl(url) ??
+                    googleDriveFolderEmbedUrl(url) ??
+                    url;
                 context.push(
                   RouteNames.embedWebViewer,
                   extra: {
@@ -5434,6 +5750,9 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
       overflow: hidden;
       background: #000;
       position: relative;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
     iframe {
       position: fixed;
@@ -5445,7 +5764,8 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
       pointer-events: auto;
     }
     .menu-hit-blocker-left,
-    .vimeo-top-actions-hit-blocker {
+    .vimeo-top-actions-hit-blocker,
+    .vimeo-settings-hit-blocker {
       position: fixed;
       z-index: 3;
       background: transparent;
@@ -5465,6 +5785,14 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
       width: 170px;
       height: 88px;
     }
+    .vimeo-settings-hit-blocker {
+      right: 0;
+      bottom: 0;
+      width: 220px;
+      height: 110px;
+      border-radius: 999px;
+      z-index: 9999;
+    }
   </style>
 </head>
 <body>
@@ -5475,16 +5803,30 @@ class _VimeoFullscreenScreenState extends State<_VimeoFullscreenScreen> {
   </iframe>
   <div class="menu-hit-blocker-left"></div>
   <div class="vimeo-top-actions-hit-blocker"></div>
+  <div class="vimeo-settings-hit-blocker"></div>
   <script>
+    // Security hardening: block long-press/context menu inside WebView.
+    document.addEventListener('contextmenu', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('selectstart', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('dragstart', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('touchstart', function () {}, { passive: true });
     const iframe = document.getElementById('vimeoPlayerFs');
     const player = new Vimeo.Player(iframe);
     const startAt = ${widget.startAtSeconds};
     window.vimeoLastTimeFs = startAt;
     player.ready().then(async () => {
       try {
+        await player.setVolume(1);
+        await player.setMuted(false);
         if (startAt > 0) {
           await player.setCurrentTime(startAt);
         }
+      } catch (_) {}
+    });
+    player.on('play', async function () {
+      try {
+        await player.setVolume(1);
+        await player.setMuted(false);
       } catch (_) {}
     });
     player.on('timeupdate', function (data) {

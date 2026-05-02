@@ -5,13 +5,15 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../core/api/api_endpoints.dart';
 import '../../core/design/app_colors.dart';
 import '../../core/design/app_text_styles.dart';
 import '../../core/design/app_radius.dart';
 import '../../core/localization/localization_helper.dart';
 import '../../services/certificates_service.dart';
+import '../../services/token_storage_service.dart';
 
 /// Certificates Screen - Pixel-perfect match to React version
 /// Matches: components/screens/certificates-screen.tsx
@@ -33,22 +35,20 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
   }
 
   Future<void> _loadCertificates() async {
+    if (kDebugMode) {
+      print('🔄 CertificatesScreen: _loadCertificates() called');
+    }
     setState(() => _isLoading = true);
     try {
       final response = await CertificatesService.instance.getCertificates();
+      final parsedCertificates = _extractCertificates(response);
 
       if (kDebugMode) {
-        print('✅ Certificates loaded: ${response['data']?.length ?? 0}');
+        print('✅ Certificates loaded: ${parsedCertificates.length}');
       }
 
       setState(() {
-        if (response['data'] is List) {
-          _certificates = List<Map<String, dynamic>>.from(
-            response['data'] as List,
-          );
-        } else {
-          _certificates = [];
-        }
+        _certificates = parsedCertificates;
         _isLoading = false;
       });
     } catch (e) {
@@ -60,6 +60,24 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  List<Map<String, dynamic>> _extractCertificates(Map<String, dynamic> response) {
+    final dynamic data = response['data'];
+    if (data is List) {
+      return data.whereType<Map<String, dynamic>>().toList();
+    }
+    if (data is Map<String, dynamic>) {
+      final dynamic nested = data['certificates'] ?? data['items'] ?? data['data'];
+      if (nested is List) {
+        return nested.whereType<Map<String, dynamic>>().toList();
+      }
+    }
+    final dynamic root = response['certificates'] ?? response['items'];
+    if (root is List) {
+      return root.whereType<Map<String, dynamic>>().toList();
+    }
+    return const [];
   }
 
   String _formatDate(BuildContext context, String? dateString) {
@@ -211,8 +229,8 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
   }
 
   Future<void> _downloadCertificate(Map<String, dynamic> cert) async {
-    final downloadUrl = cert['download_url']?.toString();
-    if (downloadUrl == null || downloadUrl.isEmpty) {
+    final downloadUrl = _resolveCertificateUrl(cert['download_url']?.toString());
+    if (downloadUrl.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -297,7 +315,16 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
       final file = File('${directory.path}/$certificateNumber.$fileExtension');
 
       // Download file
-      final response = await http.get(Uri.parse(downloadUrl));
+      final token = await TokenStorageService.instance.getAccessToken();
+      final authToken = (token ?? '').trim().toLowerCase().startsWith('bearer ')
+          ? (token ?? '').trim().substring(7).trim()
+          : (token ?? '').trim();
+      final response = await http.get(
+        Uri.parse(downloadUrl),
+        headers: authToken.isNotEmpty
+            ? {'Authorization': 'Bearer $authToken'}
+            : {},
+      );
       if (response.statusCode == 200) {
         await file.writeAsBytes(response.bodyBytes);
 
@@ -338,80 +365,6 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 3),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _shareCertificate(Map<String, dynamic> cert) async {
-    final shareUrl =
-        cert['share_url']?.toString() ?? cert['verification_url']?.toString();
-    final downloadUrl = cert['download_url']?.toString();
-    final courseTitle = cert['course']?['title']?.toString() ??
-        cert['course_title']?.toString() ??
-        context.l10n.course;
-    final certificateNumber = cert['certificate_number']?.toString() ?? '';
-
-    try {
-      String text = context.l10n.certificateCompletion(courseTitle);
-      if (certificateNumber.isNotEmpty) {
-        text += '\n${context.l10n.certificateNumberLabel}: $certificateNumber';
-      }
-      if (shareUrl != null && shareUrl.isNotEmpty) {
-        text += '\n${context.l10n.verificationLinkLabel}: $shareUrl';
-      }
-
-      if (downloadUrl != null && downloadUrl.isNotEmpty) {
-        // Try to share the file if available
-        try {
-          final directory = Platform.isAndroid
-              ? await getExternalStorageDirectory()
-              : await getApplicationDocumentsDirectory();
-
-          if (directory != null) {
-            final fileName = downloadUrl.split('/').last;
-            final fileExtension =
-                fileName.contains('.') ? fileName.split('.').last : 'pdf';
-            final filePath =
-                '${directory.path}/$certificateNumber.$fileExtension';
-            final file = File(filePath);
-
-            if (await file.exists()) {
-              await Share.shareXFiles(
-                [XFile(filePath)],
-                text: text,
-              );
-              return;
-            }
-          }
-        } catch (e) {
-          // If file sharing fails, fall back to text sharing
-          if (kDebugMode) {
-            print('⚠️ File sharing failed, using text: $e');
-          }
-        }
-      }
-
-      // Share text and URL
-      await Share.share(text);
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error sharing certificate: $e');
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.errorSharing,
-              style: GoogleFonts.cairo(),
-            ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
             ),
@@ -600,7 +553,42 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
                 // Action buttons - matches React: flex gap-3
                 Row(
                   children: [
-                    // Download button - matches React: flex-1 bg-[var(--purple)]
+                    // Preview button
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => _openPreview(cert),
+                        child: Container(
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 12), // py-3
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.1),
+                            borderRadius:
+                                BorderRadius.circular(12), // rounded-xl
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.remove_red_eye_rounded,
+                                size: 20, // w-5 h-5
+                                color: AppColors.primary,
+                              ),
+                              const SizedBox(width: 8), // gap-2
+                              Text(
+                                Localizations.localeOf(context).languageCode == 'ar'
+                                    ? 'Preview'
+                                    : 'Preview',
+                                style: AppTextStyles.bodyMedium(
+                                  color: AppColors.primary,
+                                ).copyWith(fontWeight: FontWeight.w500),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12), // gap-3
+                    // Download button
                     Expanded(
                       child: GestureDetector(
                         onTap: () => _downloadCertificate(cert),
@@ -608,7 +596,7 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
                           padding:
                               const EdgeInsets.symmetric(vertical: 12), // py-3
                           decoration: BoxDecoration(
-                            color: AppColors.purple,
+                            color: AppColors.primary,
                             borderRadius:
                                 BorderRadius.circular(12), // rounded-xl
                           ),
@@ -625,39 +613,6 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
                                 context.l10n.download,
                                 style: AppTextStyles.bodyMedium(
                                   color: Colors.white,
-                                ).copyWith(fontWeight: FontWeight.w500),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12), // gap-3
-                    // Share button - matches React: flex-1 bg-[var(--orange)]/10
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => _shareCertificate(cert),
-                        child: Container(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 12), // py-3
-                          decoration: BoxDecoration(
-                            color: AppColors.orange.withOpacity(0.1),
-                            borderRadius:
-                                BorderRadius.circular(12), // rounded-xl
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.share,
-                                size: 20, // w-5 h-5
-                                color: AppColors.orange,
-                              ),
-                              const SizedBox(width: 8), // gap-2
-                              Text(
-                                context.l10n.share,
-                                style: AppTextStyles.bodyMedium(
-                                  color: AppColors.orange,
                                 ).copyWith(fontWeight: FontWeight.w500),
                               ),
                             ],
@@ -737,5 +692,43 @@ class _CertificatesScreenState extends State<CertificatesScreen> {
         },
       ),
     );
+  }
+
+  String _resolveCertificateUrl(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return '';
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    if (value.startsWith('/')) {
+      return '${ApiEndpoints.imageBaseUrl}$value';
+    }
+    return '${ApiEndpoints.imageBaseUrl}/$value';
+  }
+
+  Future<void> _openPreview(Map<String, dynamic> cert) async {
+    final previewUrl = _resolveCertificateUrl(cert['preview_url']?.toString());
+    if (previewUrl.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            Localizations.localeOf(context).languageCode == 'ar'
+                ? 'Preview link not available'
+                : 'Preview link not available',
+            style: GoogleFonts.cairo(),
+          ),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+      return;
+    }
+    final uri = Uri.tryParse(previewUrl);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }

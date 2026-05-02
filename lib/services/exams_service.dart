@@ -4,7 +4,7 @@ import '../core/api/api_endpoints.dart';
 /// Service for exams
 class ExamsService {
   ExamsService._();
-  
+
   static final ExamsService instance = ExamsService._();
 
   List<Map<String, dynamic>> _extractExamList(dynamic data) {
@@ -72,7 +72,7 @@ class ExamsService {
         ApiEndpoints.courseExamStart(courseId, examId),
         requireAuth: true,
       );
-      
+
       if (response['success'] == true && response['data'] != null) {
         return response['data'] as Map<String, dynamic>;
       } else {
@@ -99,7 +99,7 @@ class ExamsService {
         },
         requireAuth: true,
       );
-      
+
       if (response['success'] == true && response['data'] != null) {
         return response['data'] as Map<String, dynamic>;
       } else {
@@ -145,26 +145,44 @@ class ExamsService {
     }
   }
 
-  /// Get user exams
-  Future<Map<String, dynamic>> getMyExams() async {
+  /// Get user exam results from /api/my-exam-results
+  Future<Map<String, dynamic>> getMyExams({
+    int page = 1,
+    int perPage = 20,
+    String? courseId,
+    bool? isPassed,
+  }) async {
     try {
       final response = await ApiClient.instance.get(
-        ApiEndpoints.myExamResults(),
+        ApiEndpoints.myExamResults(
+          page: page,
+          perPage: perPage,
+          courseId: courseId,
+          isPassed: isPassed,
+        ),
         requireAuth: true,
       );
-      
+
       if (response['success'] == true && response['data'] != null) {
         final data = response['data'];
         if (data is Map<String, dynamic>) {
           return data;
         }
         if (data is List) {
-          return {'completed': _extractExamList(data)};
+          return {
+            'attempts': _extractExamList(data),
+            'stats': <String, dynamic>{},
+            'meta': <String, dynamic>{},
+          };
         }
       } else {
         throw Exception(response['message'] ?? 'Failed to fetch exams');
       }
-      return {'completed': <Map<String, dynamic>>[]};
+      return {
+        'attempts': <Map<String, dynamic>>[],
+        'stats': <String, dynamic>{},
+        'meta': <String, dynamic>{},
+      };
     } catch (e) {
       rethrow;
     }
@@ -189,7 +207,9 @@ class ExamsService {
       } on ApiException catch (e) {
         if (e.statusCode == 401 || e.statusCode == 403) {
           response = await fetch(requireAuth: false);
-        } else if ((e.message).toLowerCase().contains('invalid data provided')) {
+        } else if ((e.message)
+            .toLowerCase()
+            .contains('invalid data provided')) {
           // Per API guide: retry once and log full response upstream.
           response = await fetch(requireAuth: true);
         } else {
@@ -239,4 +259,3 @@ class ExamsService {
     }
   }
 }
-

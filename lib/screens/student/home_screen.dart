@@ -16,6 +16,7 @@ import '../../services/home_service.dart';
 import '../../services/profile_service.dart';
 import '../../services/notifications_service.dart';
 import '../../services/teachers_service.dart';
+import '../../services/certificates_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../data/sample_teachers.dart';
 
@@ -38,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _homeData;
   Map<String, dynamic>? _userProfile;
   int _notificationsCount = 0;
+  int? _certificatesCountOverride;
   List<Map<String, dynamic>> _featuredCourses = [];
   List<Map<String, dynamic>> _popularCourses = [];
   List<Map<String, dynamic>> _continueLearning = [];
@@ -113,6 +115,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         // User might not be logged in, continue
       }
 
+      // Keep certificates stat in sync with certificates screen source.
+      try {
+        final certResponse = await CertificatesService.instance.getCertificates();
+        final certCount = _extractCertificatesCount(certResponse);
+        if (!mounted) return;
+        setState(() => _certificatesCountOverride = certCount);
+      } catch (_) {
+        // Keep home summary count as fallback when certificates endpoint fails.
+      }
+
       // Load teachers from API
       List<Map<String, dynamic>> teachers = [];
       try {
@@ -163,6 +175,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _categories = [];
       });
     }
+  }
+
+  int _extractCertificatesCount(Map<String, dynamic> response) {
+    final data = response['data'];
+    if (data is List) return data.length;
+    if (data is Map<String, dynamic>) {
+      final nested = data['certificates'] ?? data['items'] ?? data['data'];
+      if (nested is List) return nested.length;
+    }
+    final root = response['certificates'] ?? response['items'];
+    if (root is List) return root.length;
+    return 0;
   }
 
   @override
@@ -1076,7 +1100,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Get user summary from API
     final userSummary = _homeData?['user_summary'] as Map<String, dynamic>?;
     final enrolledCourses = userSummary?['enrolled_courses'] ?? 0;
-    final certificates = userSummary?['certificates'] ?? 0;
+    final certificates = _certificatesCountOverride ?? (userSummary?['certificates'] ?? 0);
     final totalHours = userSummary?['total_hours'] ?? 0;
 
     return Padding(

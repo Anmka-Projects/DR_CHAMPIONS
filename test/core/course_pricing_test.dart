@@ -131,4 +131,15 @@ void main() {
       expect(courseHasSubscriptionPlans(course), isTrue);
     });
   });
+
+  group('courseIsEffectivelyFree', () {
+    test('returns false when course has plans even if base price is zero', () {
+      final course = <String, dynamic>{
+        'price': 0,
+        'has_subscription_plans': true,
+      };
+
+      expect(courseIsEffectivelyFree(course), isFalse);
+    });
+  });
 }

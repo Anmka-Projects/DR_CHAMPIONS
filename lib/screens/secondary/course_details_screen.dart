@@ -7,15 +7,18 @@ import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/course_pricing.dart';
+import '../../core/course_live_meta.dart';
 import '../../core/design/app_colors.dart';
 import '../../core/navigation/route_names.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/courses_service.dart';
 import '../../services/exams_service.dart';
+import '../../services/live_courses_service.dart';
 import '../../core/api/api_client.dart';
+import '../../services/certificates_service.dart';
 import '../../services/lesson_resume_service.dart';
-import '../../services/wishlist_service.dart';
 import '../../services/profile_service.dart';
 import '../../services/token_storage_service.dart';
 import '../../widgets/assignment_detail_submission_sheet.dart';
@@ -125,14 +128,18 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   Map<String, dynamic>? _courseData;
   List<Map<String, dynamic>> _courseExams = [];
   List<Map<String, dynamic>> _courseAssignments = [];
+  List<Map<String, dynamic>> _courseLiveUpcomingSessions = [];
+  List<Map<String, dynamic>> _courseLiveNowSessions = [];
+  List<Map<String, dynamic>> _courseLivePastSessions = [];
   bool _isLoadingExams = false;
+  bool _isLoadingLiveSessions = false;
   String? _startingExamId;
-  bool _isInWishlist = false;
-  bool _isTogglingWishlist = false;
   bool _isViewingOwnCourse = false;
   final Map<String, bool> _expandedModules = {};
   final Map<String, bool> _expandedSubModules = {};
   String? _resumeLessonId;
+  Map<String, dynamic>? _savedResumeData;
+  Map<String, dynamic>? _courseCertificate;
 
   @override
   void setState(VoidCallback fn) {
@@ -143,9 +150,8 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _loadCourseDetails();
-    _checkWishlistStatus();
   }
 
   Future<void> _loadCourseDetails() async {
@@ -342,15 +348,14 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
           setState(() {
             _courseData = courseDetails;
             _isEnrolled = courseDetails['is_enrolled'] == true;
-            _isInWishlist = courseDetails['is_wishlisted'] == true ||
-                courseDetails['is_in_wishlist'] == true;
             _isLoading = false;
           });
           _loadResumeLessonState(courseDetails);
           _loadCourseAssignments();
           _loadCourseExams();
-          _checkWishlistStatus();
+          _loadCourseLiveSessions(courseDetails);
           _checkIfViewingOwnCourse(courseDetails);
+          if (_isEnrolled) _loadCourseCertificate(courseDetails);
         } catch (e) {
           if (kDebugMode) {
             print(
@@ -370,6 +375,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
           });
           _loadResumeLessonState(widget.course);
           _loadCourseAssignments();
+          _loadCourseLiveSessions(widget.course);
           _checkIfViewingOwnCourse(widget.course);
         }
       } else {
@@ -378,6 +384,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         });
         _loadResumeLessonState(widget.course);
         _loadCourseAssignments();
+        _loadCourseLiveSessions(widget.course);
         _checkIfViewingOwnCourse(widget.course);
       }
     } else {
@@ -386,6 +393,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       });
       _loadResumeLessonState(widget.course);
       _loadCourseAssignments();
+      _loadCourseLiveSessions(widget.course);
       _checkIfViewingOwnCourse(widget.course);
     }
   }
@@ -471,8 +479,18 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
 
     setState(() {
       _resumeLessonId = savedLessonId;
+      _savedResumeData = saved;
       _selectedLessonIndex = resumeIndex;
     });
+  }
+
+  Future<void> _loadCourseCertificate(Map<String, dynamic>? course) async {
+    final courseId = course?['id']?.toString();
+    if (courseId == null || courseId.isEmpty) return;
+    final cert =
+        await CertificatesService.instance.getCertificateForCourse(courseId);
+    if (!mounted) return;
+    setState(() => _courseCertificate = cert);
   }
 
   Map<String, dynamic>? _getResumeLesson() {
@@ -515,10 +533,23 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       });
     }
 
-    context.push(RouteNames.lessonViewer, extra: {
+    final allLessons =
+        _collectCourseLessons(_courseData ?? widget.course);
+    final resolvedIndex = indexHint ??
+        allLessons.indexWhere((l) => l['id']?.toString() == lessonId);
+
+    await context.push(RouteNames.lessonViewer, extra: {
       'lesson': lesson,
       'courseId': courseId,
+      'allLessons': allLessons,
+      'lessonIndex': resolvedIndex,
     });
+
+    if (!mounted) return;
+    await _loadResumeLessonState(_courseData ?? widget.course);
+    if (_isEnrolled) {
+      await _loadCourseCertificate(_courseData ?? widget.course);
+    }
   }
 
   void _playLesson(int index, Map<String, dynamic> lesson) async {
@@ -594,6 +625,14 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                     // Course Info Header
                     _buildCourseHeader(course, finalIsFree, priceValue),
 
+                    // Resume Banner
+                    if (_isEnrolled && _resumeLessonId != null)
+                      _buildResumeBanner(course),
+
+                    // Certificate Banner
+                    if (_courseCertificate != null)
+                      _buildCertificateBanner(),
+
                     // Tabs
                     _buildTabs(),
 
@@ -607,6 +646,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                           _buildAssignmentsTab(),
                           _buildAboutTab(course),
                           _buildExamsTab(),
+                          _buildLiveSessionsTab(),
                         ],
                       ),
                     ),
@@ -760,35 +800,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                 ),
                 Row(
                   children: [
-                    GestureDetector(
-                      onTap: _isTogglingWishlist ? null : _toggleWishlist,
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: _isTogglingWishlist
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white),
-                                ),
-                              )
-                            : Icon(
-                                _isInWishlist
-                                    ? Icons.bookmark_rounded
-                                    : Icons.bookmark_border_rounded,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
                     Container(
                       width: 40,
                       height: 40,
@@ -818,6 +829,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     if (course == null) {
       return const SizedBox.shrink();
     }
+    final hidePriceChip = courseHasPlansWithZeroBasePrice(course);
     final coursePriceText = _formatCoursePriceText(course);
     final currencyCode =
         course['currency']?.toString().toUpperCase() == 'USD' ? 'USD' : 'EGP';
@@ -884,26 +896,29 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                 ),
               ),
               const SizedBox(width: 12),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: isFree
-                        ? [const Color(0xFF10B981), const Color(0xFF059669)]
-                        : [const Color(0xFFF97316), const Color(0xFFEA580C)],
+              if (!hidePriceChip)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    gradient: isFree
+                        ? const LinearGradient(
+                            colors: [Color(0xFF10B981), Color(0xFF059669)],
+                          )
+                        : const LinearGradient(
+                            colors: [Color(0xFFF97316), Color(0xFFEA580C)],
+                          ),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  isFree ? l10n.free : (coursePriceText ?? l10n.notSpecified),
-                  style: GoogleFonts.cairo(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                  child: Text(
+                    isFree ? l10n.free : (coursePriceText ?? l10n.notSpecified),
+                    style: GoogleFonts.cairo(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
           if (!isFree && hasBackendDiscount) ...[
@@ -1044,6 +1059,280 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     );
   }
 
+  Widget _buildResumeBanner(Map<String, dynamic>? course) {
+    final resumeLesson = _getResumeLesson();
+    final lessonTitle = _savedResumeData?['lessonTitle']?.toString() ??
+        resumeLesson?['title']?.toString() ??
+        'الدرس السابق';
+
+    // watchedSeconds → format as mm:ss or just minutes
+    final watchedSec =
+        (_savedResumeData?['watchedSeconds'] as num?)?.toInt() ?? 0;
+    final positionMs =
+        (_savedResumeData?['positionMs'] as num?)?.toInt() ?? 0;
+
+    String progressLabel = '';
+    if (positionMs > 0) {
+      final totalSec = positionMs ~/ 1000;
+      final mm = (totalSec ~/ 60).toString().padLeft(2, '0');
+      final ss = (totalSec % 60).toString().padLeft(2, '0');
+      progressLabel = 'توقفت عند $mm:$ss';
+    } else if (watchedSec > 0) {
+      if (watchedSec >= 60) {
+        progressLabel = 'شاهدت ${(watchedSec / 60).toStringAsFixed(0)} دقيقة';
+      } else {
+        progressLabel = 'شاهدت $watchedSec ثانية';
+      }
+    }
+
+    return GestureDetector(
+      onTap: () {
+        if (resumeLesson != null) {
+          final allLessons = _collectCourseLessons(course);
+          final idx = allLessons.indexWhere(
+              (l) => l['id']?.toString() == resumeLesson['id']?.toString());
+          _openLesson(resumeLesson, indexHint: idx >= 0 ? idx : null);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              AppColors.primary.withOpacity(0.95),
+              AppColors.primary.withOpacity(0.75),
+            ],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withOpacity(0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'استكمل من حيث توقفت',
+                    style: GoogleFonts.cairo(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Text(
+                    lessonTitle,
+                    style: GoogleFonts.cairo(
+                      fontSize: 11,
+                      color: Colors.white.withOpacity(0.85),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (progressLabel.isNotEmpty)
+                    Text(
+                      progressLabel,
+                      style: GoogleFonts.cairo(
+                        fontSize: 10,
+                        color: Colors.white.withOpacity(0.7),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'استكمال',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCertificateBanner() {
+    final cert = _courseCertificate!;
+    final isAr = Localizations.localeOf(context).languageCode == 'ar';
+    final certNumber = cert['certificate_number']?.toString() ?? '';
+    final issueDate = cert['issue_date']?.toString() ?? '';
+    String dateLabel = '';
+    if (issueDate.isNotEmpty) {
+      try {
+        final dt = DateTime.parse(issueDate);
+        dateLabel =
+            '${dt.day}/${dt.month}/${dt.year}';
+      } catch (_) {}
+    }
+
+    String resolveUrl(String? raw) {
+      if (raw == null || raw.isEmpty) return '';
+      if (raw.startsWith('http')) return raw;
+      const host = 'https://drchampions-academy.anmka.com';
+      return '$host$raw';
+    }
+
+    final previewUrl = resolveUrl(cert['preview_url']?.toString());
+    final downloadUrl = resolveUrl(cert['download_url']?.toString());
+
+    Future<void> openUrl(String url) async {
+      if (url.isEmpty) return;
+      final uri = Uri.parse(url);
+      try {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFF59E0B).withOpacity(0.35),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.25),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.emoji_events_rounded,
+                    color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isAr ? 'شهادة الإتمام' : 'Certificate of Completion',
+                      style: GoogleFonts.cairo(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    if (certNumber.isNotEmpty)
+                      Text(
+                        certNumber,
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: Colors.white.withOpacity(0.85),
+                        ),
+                      ),
+                    if (dateLabel.isNotEmpty)
+                      Text(
+                        isAr ? 'صدرت: $dateLabel' : 'Issued: $dateLabel',
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: Colors.white.withOpacity(0.85),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              if (previewUrl.isNotEmpty)
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => openUrl(previewUrl),
+                    icon: const Icon(Icons.visibility_rounded, size: 16),
+                    label: Text(
+                      isAr ? 'معاينة' : 'Preview',
+                      style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFFD97706),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+              if (previewUrl.isNotEmpty && downloadUrl.isNotEmpty)
+                const SizedBox(width: 10),
+              if (downloadUrl.isNotEmpty)
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => openUrl(downloadUrl),
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    label: Text(
+                      isAr ? 'تحميل' : 'Download',
+                      style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white.withOpacity(0.2),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTabs() {
     final l10n = AppLocalizations.of(context)!;
     return Container(
@@ -1077,9 +1366,225 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
           ),
           Tab(text: l10n.about),
           Tab(text: l10n.exams),
+          Tab(text: l10n.live),
         ],
       ),
     );
+  }
+
+  Future<void> _loadCourseLiveSessions(Map<String, dynamic>? course) async {
+    final currentCourseId = _resolveCourseIdFromMap(course);
+    if (currentCourseId == null || currentCourseId.isEmpty) {
+      setState(() {
+        _courseLiveNowSessions = [];
+        _courseLiveUpcomingSessions = [];
+        _courseLivePastSessions = [];
+        _isLoadingLiveSessions = false;
+      });
+      return;
+    }
+
+    setState(() => _isLoadingLiveSessions = true);
+    try {
+      Map<String, dynamic> response = await LiveCoursesService.instance.getLiveCourses(
+        courseId: currentCourseId,
+      );
+      if (kDebugMode) {
+        final liveNowCount = (response['live_now'] is List)
+            ? (response['live_now'] as List).length
+            : 0;
+        final upcomingCount = (response['upcoming'] is List)
+            ? (response['upcoming'] as List).length
+            : 0;
+        final pastCount =
+            (response['past'] is List) ? (response['past'] as List).length : 0;
+        print('📡 LIVE SESSIONS (FILTERED API)');
+        print('  courseId: $currentCourseId');
+        print('  groups => live_now: $liveNowCount, upcoming: $upcomingCount, past: $pastCount');
+        try {
+          const encoder = JsonEncoder.withIndent('  ');
+          print('  response:');
+          print(encoder.convert(response));
+        } catch (_) {
+          print('  response(raw): $response');
+        }
+      }
+
+      List<Map<String, dynamic>> parseGroup(dynamic rawList, String fallbackStatus) {
+        if (rawList is! List) return const [];
+        final parsed = <Map<String, dynamic>>[];
+        for (final item in rawList) {
+          if (item is! Map) continue;
+          final session = item.map(
+            (key, value) => MapEntry(key.toString(), value),
+          );
+          final meta = parseCourseLiveMeta(session['description']?.toString());
+          // Trust the backend group bucket first (live_now/upcoming/past),
+          // because item-level status can still be "scheduled" in live_now.
+          session['api_status'] = session['status']?.toString();
+          session['status'] = fallbackStatus;
+          session['plain_description'] = meta.plainDescription;
+          session['parsed_course_title'] = meta.courseTitle;
+          parsed.add(session);
+        }
+        return parsed;
+      }
+
+      List<Map<String, dynamic>> keepOnlyCurrentCourse(List<Map<String, dynamic>> sessions) {
+        final normalizedCurrentCourseId = currentCourseId.trim().toLowerCase();
+        return sessions.where((session) {
+        final directCourseId = session['course_id']?.toString() ??
+            session['courseId']?.toString() ??
+            session['course']?['id']?.toString();
+          final metaCourseId =
+              parseCourseLiveMeta(session['description']?.toString()).courseId;
+        final candidateId =
+              (directCourseId ?? metaCourseId ?? '').trim().toLowerCase();
+          return candidateId.isEmpty || candidateId == normalizedCurrentCourseId;
+        }).toList();
+      }
+
+      List<Map<String, dynamic>> sortByDate(List<Map<String, dynamic>> sessions) {
+        final sorted = List<Map<String, dynamic>>.from(sessions);
+        sorted.sort((a, b) {
+          final da = DateTime.tryParse(
+                  a['start_date']?.toString() ??
+                      a['scheduled_at']?.toString() ??
+                      a['start_time']?.toString() ??
+                      '') ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          final db = DateTime.tryParse(
+                  b['start_date']?.toString() ??
+                      b['scheduled_at']?.toString() ??
+                      b['start_time']?.toString() ??
+                      '') ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          return db.compareTo(da);
+        });
+        return sorted;
+      }
+
+      final liveNow = keepOnlyCurrentCourse(parseGroup(response['live_now'], 'live'));
+      final upcoming =
+          keepOnlyCurrentCourse(parseGroup(response['upcoming'], 'upcoming'));
+      final past = keepOnlyCurrentCourse(parseGroup(response['past'], 'past'));
+
+      // Backend fallback:
+      // If courseId-filtered API returns empty, retry full list and filter locally.
+      final isEmptyFromFilteredApi =
+          liveNow.isEmpty && upcoming.isEmpty && past.isEmpty;
+      if (isEmptyFromFilteredApi) {
+        response = await LiveCoursesService.instance.getLiveCourses();
+        if (kDebugMode) {
+          final liveNowCount = (response['live_now'] is List)
+              ? (response['live_now'] as List).length
+              : 0;
+          final upcomingCount = (response['upcoming'] is List)
+              ? (response['upcoming'] as List).length
+              : 0;
+          final pastCount =
+              (response['past'] is List) ? (response['past'] as List).length : 0;
+          print('📡 LIVE SESSIONS (FALLBACK API - UNFILTERED)');
+          print('  courseId: $currentCourseId');
+          print(
+              '  groups => live_now: $liveNowCount, upcoming: $upcomingCount, past: $pastCount');
+          try {
+            const encoder = JsonEncoder.withIndent('  ');
+            print('  response:');
+            print(encoder.convert(response));
+          } catch (_) {
+            print('  response(raw): $response');
+          }
+        }
+      }
+
+      final finalLiveNow = isEmptyFromFilteredApi
+          ? keepOnlyCurrentCourse(parseGroup(response['live_now'], 'live'))
+          : liveNow;
+      final finalUpcoming = isEmptyFromFilteredApi
+          ? keepOnlyCurrentCourse(parseGroup(response['upcoming'], 'upcoming'))
+          : upcoming;
+      final finalPast = isEmptyFromFilteredApi
+          ? keepOnlyCurrentCourse(parseGroup(response['past'], 'past'))
+          : past;
+
+      setState(() {
+        _courseLiveNowSessions = sortByDate(finalLiveNow);
+        _courseLiveUpcomingSessions = sortByDate(finalUpcoming);
+        _courseLivePastSessions = sortByDate(finalPast);
+        _isLoadingLiveSessions = false;
+      });
+      if (kDebugMode) {
+        print('✅ LIVE SESSIONS (FINAL AFTER LOCAL FILTER)');
+        print('  courseId: $currentCourseId');
+        print(
+            '  final => live_now: ${_courseLiveNowSessions.length}, upcoming: ${_courseLiveUpcomingSessions.length}, past: ${_courseLivePastSessions.length}');
+      }
+    } catch (_) {
+      setState(() {
+        _courseLiveNowSessions = [];
+        _courseLiveUpcomingSessions = [];
+        _courseLivePastSessions = [];
+        _isLoadingLiveSessions = false;
+      });
+    }
+  }
+
+  Widget _buildLiveSessionsTab() {
+    final l10n = AppLocalizations.of(context)!;
+    if (_isLoadingLiveSessions) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final totalCount = _courseLiveNowSessions.length +
+        _courseLiveUpcomingSessions.length +
+        _courseLivePastSessions.length;
+    if (totalCount == 0) {
+      return _buildEmptyState(l10n.noLiveSessions, Icons.videocam_off_rounded);
+    }
+
+    final items = <Map<String, dynamic>>[];
+    void addGroup(String title, List<Map<String, dynamic>> sessions) {
+      if (sessions.isEmpty) return;
+      items.add({'__header': true, 'title': title});
+      items.addAll(sessions);
+    }
+
+    addGroup(l10n.liveNow, _courseLiveNowSessions);
+    addGroup(l10n.upcoming, _courseLiveUpcomingSessions);
+    addGroup(
+      Localizations.localeOf(context).languageCode == 'ar' ? 'سابقة' : 'Past',
+      _courseLivePastSessions,
+    );
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      physics: const BouncingScrollPhysics(),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final row = items[index];
+        if (row['__header'] == true) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8, top: 4),
+            child: Text(
+              row['title']?.toString() ?? '',
+              style: GoogleFonts.cairo(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.foreground,
+              ),
+            ),
+          );
+        }
+        return _CourseSessionCard(session: row, formatDate: _formatDate);
+      },
+    );
+  }
+
+  String _formatDate(String dateStr) {
+    final dt = DateTime.tryParse(dateStr);
+    if (dt == null) return dateStr;
+    final localeTag = Localizations.localeOf(context).toLanguageTag();
+    return DateFormat('d MMM y, h:mm a', localeTag).format(dt);
   }
 
   Widget _buildAssignmentsTab() {
@@ -2217,7 +2722,23 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     final isPassed = exam['is_passed'] == true;
     final bestScoreRaw = exam['best_score'];
     final questionsCount = exam['questions_count'] ?? 0;
-    final durationMinutes = exam['duration_minutes'] ?? 15;
+    final durationMinutes = (exam['duration_minutes'] is num)
+        ? (exam['duration_minutes'] as num).toInt()
+        : int.tryParse(exam['duration_minutes']?.toString() ?? '');
+    final hasTimeLimit = (() {
+      final explicit = [
+        exam['has_time_limit'],
+        exam['is_timed'],
+        exam['timed'],
+      ];
+      for (final flag in explicit) {
+        if (flag is bool) return flag;
+        final normalized = flag?.toString().toLowerCase().trim();
+        if (normalized == 'true' || normalized == '1') return true;
+        if (normalized == 'false' || normalized == '0') return false;
+      }
+      return durationMinutes != null && durationMinutes > 0;
+    })();
     final passingScore = exam['passing_score'] ?? 70;
     final maxAttempts = exam['max_attempts'];
     final attemptsUsed = exam['attempts_used'] ?? 0;
@@ -2411,8 +2932,16 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                       isTrial ? Colors.white : AppColors.purple,
                     ),
                     _buildExamInfoChip(
-                      Icons.access_time,
-                      '$durationMinutes ${AppLocalizations.of(context)!.minutesUnit(durationMinutes)}',
+                      hasTimeLimit
+                          ? Icons.access_time
+                          : Icons.all_inclusive_rounded,
+                      hasTimeLimit
+                          ? ((durationMinutes != null && durationMinutes > 0)
+                              ? '$durationMinutes ${AppLocalizations.of(context)!.minutesUnit(durationMinutes)}'
+                              : AppLocalizations.of(context)!.notSpecified)
+                          : (Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'بدون وقت'
+                              : 'No time limit'),
                       isTrial
                           ? Colors.white.withOpacity(0.3)
                           : AppColors.purple.withOpacity(0.1),
@@ -2708,35 +3237,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
         top: false,
         child: Row(
           children: [
-            GestureDetector(
-              onTap: _isTogglingWishlist ? null : _toggleWishlist,
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppColors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: _isTogglingWishlist
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(AppColors.orange),
-                        ),
-                      )
-                    : Icon(
-                        _isInWishlist
-                            ? Icons.bookmark_rounded
-                            : Icons.bookmark_border_rounded,
-                        color: AppColors.orange,
-                        size: 24,
-                      ),
-              ),
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: GestureDetector(
                 onTap: _isEnrolling
@@ -2878,7 +3378,8 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        int selectedIndex = 0; // 0 = full price, 1..n = plans
+        final hasFullCoursePrice = parseCourseTotalPricing(courseData).amount > 0;
+        int selectedIndex = hasFullCoursePrice ? 0 : 1;
 
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -2923,14 +3424,16 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                       child: SingleChildScrollView(
                         child: Column(
                           children: [
-                            _buildPaymentChoiceTile(
-                              title: AppLocalizations.of(context)!.coursePrice,
-                              subtitle: 'Full course purchase',
-                              isSelected: selectedIndex == 0,
-                              onTap: () =>
-                                  setModalState(() => selectedIndex = 0),
-                            ),
-                            const SizedBox(height: 8),
+                            if (hasFullCoursePrice) ...[
+                              _buildPaymentChoiceTile(
+                                title: AppLocalizations.of(context)!.coursePrice,
+                                subtitle: 'Full course purchase',
+                                isSelected: selectedIndex == 0,
+                                onTap: () =>
+                                    setModalState(() => selectedIndex = 0),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
                             ...List.generate(parsedPlans.length, (index) {
                               final plan = parsedPlans[index];
                               final cardIndex = index + 1;
@@ -2988,7 +3491,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: () {
-                          if (selectedIndex == 0) {
+                          if (hasFullCoursePrice && selectedIndex == 0) {
                             Navigator.of(context)
                                 .pop({'__checkout_choice': 'full'});
                           } else {
@@ -3922,199 +4425,6 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen>
     return assignments;
   }
 
-  Future<void> _checkWishlistStatus() async {
-    final course = _courseData ?? widget.course;
-    if (course == null || course['id'] == null) return;
-
-    final courseId = course['id']?.toString();
-    if (courseId == null || courseId.isEmpty) return;
-
-    if (!await TokenStorageService.instance.isLoggedIn()) {
-      if (mounted) {
-        setState(() => _isInWishlist = false);
-      }
-      return;
-    }
-
-    try {
-      final wishlist = await WishlistService.instance.getWishlist();
-
-      // Print detailed response
-      if (kDebugMode) {
-        print('═══════════════════════════════════════════════════════════');
-        print('❤️ WISHLIST RESPONSE (getWishlist)');
-        print('═══════════════════════════════════════════════════════════');
-        print('Course ID: $courseId');
-        print('Response Type: ${wishlist.runtimeType}');
-        print('Response Keys: ${wishlist.keys.toList()}');
-        print('───────────────────────────────────────────────────────────');
-        print('Full Response JSON:');
-        try {
-          const encoder = JsonEncoder.withIndent('  ');
-          print(encoder.convert(wishlist));
-        } catch (e) {
-          print('Could not convert to JSON: $e');
-          print('Raw Response: $wishlist');
-        }
-        print('───────────────────────────────────────────────────────────');
-        print('Key Fields:');
-        wishlist.forEach((key, value) {
-          if (key == 'data' && value is List) {
-            print('  - $key: List with ${value.length} items');
-            for (int i = 0; i < value.length && i < 3; i++) {
-              print('    Item $i: ${value[i]}');
-            }
-          } else {
-            print('  - $key: $value (${value.runtimeType})');
-          }
-        });
-        print('═══════════════════════════════════════════════════════════');
-      }
-
-      final items = wishlist['data'] as List?;
-
-      if (items != null) {
-        final isInWishlist = items.any((item) {
-          final itemCourse = item['course'] as Map<String, dynamic>?;
-          final itemCourseId =
-              itemCourse?['id']?.toString() ?? item['course_id']?.toString();
-          return itemCourseId == courseId;
-        });
-
-        if (kDebugMode) {
-          print('Is Course in Wishlist: $isInWishlist');
-        }
-
-        if (mounted) {
-          setState(() {
-            _isInWishlist = isInWishlist;
-          });
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('═══════════════════════════════════════════════════════════');
-        print('❌ ERROR CHECKING WISHLIST STATUS');
-        print('═══════════════════════════════════════════════════════════');
-        print('Course ID: $courseId');
-        print('Error: $e');
-        print('Error Type: ${e.runtimeType}');
-        print('═══════════════════════════════════════════════════════════');
-      }
-      // Don't update state on error, keep current state
-    }
-  }
-
-  Future<void> _toggleWishlist() async {
-    final course = _courseData ?? widget.course;
-    if (course == null || course['id'] == null) return;
-
-    final courseId = course['id']?.toString();
-    if (courseId == null || courseId.isEmpty) return;
-
-    if (!await TokenStorageService.instance.isLoggedIn()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.mustLoginFirst,
-              style: GoogleFonts.cairo(),
-            ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-      return;
-    }
-
-    setState(() => _isTogglingWishlist = true);
-
-    try {
-      if (_isInWishlist) {
-        if (kDebugMode) {
-          print('═══════════════════════════════════════════════════════════');
-          print('🗑️ REMOVING FROM WISHLIST');
-          print('═══════════════════════════════════════════════════════════');
-          print('Course ID: $courseId');
-          print('═══════════════════════════════════════════════════════════');
-        }
-        await WishlistService.instance.removeFromWishlist(courseId);
-        if (kDebugMode) {
-          print('✅ Successfully removed from wishlist');
-        }
-      } else {
-        if (kDebugMode) {
-          print('═══════════════════════════════════════════════════════════');
-          print('➕ ADDING TO WISHLIST');
-          print('═══════════════════════════════════════════════════════════');
-          print('Course ID: $courseId');
-          print('═══════════════════════════════════════════════════════════');
-        }
-        await WishlistService.instance.addToWishlist(courseId);
-        if (kDebugMode) {
-          print('✅ Successfully added to wishlist');
-        }
-      }
-
-      setState(() {
-        _isInWishlist = !_isInWishlist;
-        _isTogglingWishlist = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _isInWishlist
-                  ? AppLocalizations.of(context)!.addedToWishlist
-                  : AppLocalizations.of(context)!.removedFromWishlist,
-              style: GoogleFonts.cairo(),
-            ),
-            backgroundColor: const Color(0xFF10B981),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error toggling wishlist: $e');
-      }
-
-      setState(() => _isTogglingWishlist = false);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.toString().contains('401') ||
-                      e.toString().contains('Unauthorized')
-                  ? AppLocalizations.of(context)!.mustLoginFirst
-                  : AppLocalizations.of(context)!.errorWishlist(
-                      _isInWishlist
-                          ? AppLocalizations.of(context)!.removingFrom
-                          : AppLocalizations.of(context)!.addingTo,
-                    ),
-              style: GoogleFonts.cairo(),
-            ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _startExam(String examId, Map<String, dynamic> examData) async {
     if (examId.isEmpty) return;
     if (!_examCanStartFromData(examData)) {
@@ -4522,6 +4832,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
   Timer? _examTimer;
   int _remainingSeconds = 0;
   bool _timerExpired = false;
+  bool _isTimedExam = false;
 
   @override
   void initState() {
@@ -4557,7 +4868,25 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
     _startExamTimer();
   }
 
-  int _resolveExamDurationMinutes() {
+  bool _resolveHasTimeLimitFlag() {
+    final explicitFlags = [
+      widget.examSession?['has_time_limit'],
+      widget.examData?['has_time_limit'],
+      widget.examSession?['is_timed'],
+      widget.examData?['is_timed'],
+      widget.examSession?['timed'],
+      widget.examData?['timed'],
+    ];
+    for (final flag in explicitFlags) {
+      if (flag is bool) return flag;
+      final normalized = flag?.toString().toLowerCase().trim();
+      if (normalized == 'true' || normalized == '1') return true;
+      if (normalized == 'false' || normalized == '0') return false;
+    }
+    return true;
+  }
+
+  int? _resolveExamDurationMinutes() {
     final candidates = [
       widget.examSession?['duration_minutes'],
       widget.examData?['duration_minutes'],
@@ -4569,13 +4898,20 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
       final parsed = int.tryParse(c?.toString() ?? '');
       if (parsed != null && parsed > 0) return parsed;
     }
-    return 15;
+    return null;
   }
 
   void _startExamTimer() {
     _examTimer?.cancel();
     final durationMinutes = _resolveExamDurationMinutes();
-    _remainingSeconds = durationMinutes * 60;
+    final hasTimeLimit = _resolveHasTimeLimitFlag();
+    _isTimedExam = hasTimeLimit && durationMinutes != null;
+    if (!_isTimedExam) {
+      _remainingSeconds = 0;
+      _timerExpired = false;
+      return;
+    }
+    _remainingSeconds = durationMinutes! * 60;
     _timerExpired = false;
     _examTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
@@ -5122,23 +5458,29 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: (_remainingSeconds <= 60)
-                      ? Colors.red.withOpacity(0.18)
+                  color: _isTimedExam
+                      ? ((_remainingSeconds <= 60)
+                          ? Colors.red.withOpacity(0.18)
+                          : Colors.white.withOpacity(0.16))
                       : Colors.white.withOpacity(0.16),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      Icons.timer_outlined,
+                      _isTimedExam ? Icons.timer_outlined : Icons.all_inclusive,
                       size: 16,
-                      color: (_remainingSeconds <= 60)
+                      color: _isTimedExam && _remainingSeconds <= 60
                           ? Colors.red.shade100
                           : Colors.white,
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      _formatRemainingTime(),
+                      _isTimedExam
+                          ? _formatRemainingTime()
+                          : (Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'بدون وقت'
+                              : 'No time limit'),
                       style: GoogleFonts.cairo(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -5151,7 +5493,7 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.only(left: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(
               child: Text(
                 '${_currentQuestionIndex + 1}/${_questions.length}',
@@ -5728,6 +6070,368 @@ class _TrialExamScreenState extends State<TrialExamScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A live-session card that ticks every second to show a live countdown
+/// and swaps the button to "Enter the session" once the session time arrives.
+class _CourseSessionCard extends StatefulWidget {
+  final Map<String, dynamic> session;
+  final String Function(String) formatDate;
+
+  const _CourseSessionCard({
+    required this.session,
+    required this.formatDate,
+  });
+
+  @override
+  State<_CourseSessionCard> createState() => _CourseSessionCardState();
+}
+
+class _CourseSessionCardState extends State<_CourseSessionCard> {
+  Timer? _timer;
+  Duration _remaining = Duration.zero;
+  bool _sessionStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _computeRemaining();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) _computeRemaining();
+    });
+  }
+
+  void _computeRemaining() {
+    final session = widget.session;
+    final startRaw = session['start_date']?.toString() ??
+        session['start_time']?.toString() ??
+        session['date']?.toString() ??
+        session['scheduled_at']?.toString() ??
+        '';
+    final isLiveStatus = session['status'] == 'live' ||
+        session['status'] == 'live_now' ||
+        session['is_live'] == true;
+    final isPastStatus = session['status'] == 'past' ||
+        session['status'] == 'ended' ||
+        session['status'] == 'completed';
+
+    if (isLiveStatus || isPastStatus) {
+      setState(() {
+        _remaining = Duration.zero;
+        _sessionStarted = true;
+      });
+      return;
+    }
+
+    if (startRaw.isEmpty) {
+      setState(() => _sessionStarted = false);
+      return;
+    }
+
+    final startDt = DateTime.tryParse(startRaw);
+    if (startDt == null) {
+      setState(() => _sessionStarted = false);
+      return;
+    }
+
+    final diff = startDt.difference(DateTime.now());
+    setState(() {
+      _remaining = diff.isNegative ? Duration.zero : diff;
+      _sessionStarted = diff.isNegative || diff == Duration.zero;
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _openJoinUrl() async {
+    final session = widget.session;
+    final rawUrl = session['join_url']?.toString() ??
+        session['meeting_link']?.toString() ??
+        session['meeting_url']?.toString() ??
+        session['zoom_link']?.toString() ??
+        session['platformLink']?.toString() ??
+        session['platform_link']?.toString() ??
+        '';
+    if (rawUrl.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.sessionLinkUnavailable),
+          ),
+        );
+      }
+      return;
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) return;
+    final didLaunch = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!didLaunch && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.sessionLinkUnavailable),
+        ),
+      );
+    }
+  }
+
+  void _handlePaidLockedTap(Map<String, dynamic> session) {
+    if (!mounted) return;
+    final meta = parseCourseLiveMeta(session['description']?.toString());
+    final courseId = session['course_id']?.toString() ??
+        session['courseId']?.toString() ??
+        session['course']?['id']?.toString() ??
+        meta.courseId ??
+        session['id']?.toString() ??
+        '';
+    final title = session['title']?.toString().trim().isNotEmpty == true
+        ? session['title'].toString()
+        : (meta.courseTitle ?? AppLocalizations.of(context)!.liveSession);
+    final price = (session['price'] is num)
+        ? (session['price'] as num).toDouble()
+        : (double.tryParse(session['price']?.toString() ?? '') ?? 0.0);
+    final currency =
+        session['currency']?.toString() ?? session['currency_code']?.toString() ?? 'EGP';
+
+    context.push(
+      RouteNames.checkout,
+      extra: {
+        'id': courseId,
+        'title': title,
+        'price': price,
+        'currency': currency,
+        'is_free': false,
+        'live_session_id': session['id']?.toString(),
+        'live_session_price': price,
+        'checkout_for': 'live_session',
+      },
+    );
+  }
+
+  bool _isPaidSession(Map<String, dynamic> session) {
+    final isFreeValue = session['is_free'];
+    if (isFreeValue != null) {
+      final normalized = isFreeValue.toString().trim().toLowerCase();
+      if (normalized == 'true' || normalized == '1' || normalized == 'yes') {
+        return false;
+      }
+      return true;
+    }
+    final amountCandidates = [
+      session['price'],
+      session['amount'],
+      session['session_price'],
+      session['price_amount'],
+      session['cost'],
+    ];
+    for (final raw in amountCandidates) {
+      final parsed = raw is num ? raw : num.tryParse(raw?.toString() ?? '');
+      if (parsed != null && parsed > 0) return true;
+    }
+    return false;
+  }
+
+  String _countdownLabel() {
+    final h = _remaining.inHours;
+    final m = _remaining.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = _remaining.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (h > 0) return '$h:$m:$s';
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final session = widget.session;
+
+    final title = session['title']?.toString().trim().isNotEmpty == true
+        ? session['title'].toString()
+        : l10n.liveSession;
+    final plainDescription =
+        session['plain_description']?.toString().trim() ?? '';
+    final instructor = session['instructor'] is Map
+        ? (session['instructor'] as Map)['name']?.toString() ?? l10n.instructor
+        : (session['instructor']?.toString() ?? l10n.instructor);
+    final startRaw = session['start_date']?.toString() ??
+        session['start_time']?.toString() ??
+        session['date']?.toString() ??
+        session['scheduled_at']?.toString() ??
+        '';
+    final isLiveStatus = session['status'] == 'live' ||
+        session['status'] == 'live_now' ||
+        session['is_live'] == true;
+    final isPastStatus = session['status'] == 'past' ||
+        session['status'] == 'ended' ||
+        session['status'] == 'completed';
+    final isLockedPaid = _isPaidSession(session);
+    final bool isEnded = isPastStatus || (_sessionStarted && !isLiveStatus);
+    final bool canEnter =
+        (isLiveStatus || _sessionStarted) && !isEnded && !isLockedPaid;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.foreground,
+                  ),
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isLiveStatus
+                      ? Colors.red.withOpacity(0.1)
+                      : isPastStatus || (_sessionStarted && !isLiveStatus)
+                          ? Colors.grey.withOpacity(0.12)
+                          : AppColors.purple.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  isLiveStatus
+                      ? l10n.liveNow
+                      : isLockedPaid
+                          ? l10n.paid
+                      : isPastStatus || (_sessionStarted && !isLiveStatus)
+                          ? (Localizations.localeOf(context).languageCode == 'ar'
+                              ? 'منتهية'
+                              : 'Ended')
+                          : l10n.upcoming,
+                  style: GoogleFonts.cairo(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: isLiveStatus
+                        ? Colors.red
+                        : isLockedPaid
+                            ? const Color(0xFFB45309)
+                        : isPastStatus || (_sessionStarted && !isLiveStatus)
+                            ? Colors.grey.shade600
+                            : AppColors.purple,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (plainDescription.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              plainDescription,
+              style: GoogleFonts.cairo(
+                fontSize: 12,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.calendar_today_rounded,
+                      size: 14, color: AppColors.mutedForeground),
+                  const SizedBox(width: 4),
+                  Text(
+                    startRaw.isEmpty
+                        ? l10n.undefinedDate
+                        : widget.formatDate(startRaw),
+                    style: GoogleFonts.cairo(
+                        fontSize: 11, color: AppColors.mutedForeground),
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.person_outline_rounded,
+                      size: 14, color: AppColors.mutedForeground),
+                  const SizedBox(width: 4),
+                  Text(
+                    instructor,
+                    style: GoogleFonts.cairo(
+                        fontSize: 11, color: AppColors.mutedForeground),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: isLockedPaid
+                  ? () => _handlePaidLockedTap(session)
+                  : (canEnter ? _openJoinUrl : null),
+              icon: Icon(
+                isLockedPaid
+                    ? Icons.lock_rounded
+                    : isEnded
+                    ? Icons.event_busy_rounded
+                    : canEnter
+                    ? Icons.play_arrow_rounded
+                    : Icons.access_time_rounded,
+                size: 18,
+              ),
+              label: Text(
+                isLockedPaid
+                    ? l10n.completePurchase
+                    : isEnded
+                    ? 'Session ended'
+                    : canEnter
+                        ? l10n.joinNow
+                        : _remaining == Duration.zero
+                            ? l10n.remindMe
+                            : _countdownLabel(),
+                style: GoogleFonts.cairo(fontWeight: FontWeight.w700),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isLockedPaid
+                    ? const Color(0xFFF59E0B)
+                    : isEnded
+                    ? Colors.grey
+                    : canEnter
+                        ? Colors.green
+                        : AppColors.purple,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: isEnded ? Colors.grey : AppColors.purple,
+                disabledForegroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -4,17 +4,31 @@ import '../core/api/api_endpoints.dart';
 /// Service for live courses
 class LiveCoursesService {
   LiveCoursesService._();
-  
+
   static final LiveCoursesService instance = LiveCoursesService._();
 
   /// Get live courses
-  Future<Map<String, dynamic>> getLiveCourses() async {
+  Future<Map<String, dynamic>> getLiveCourses({
+    String? courseId,
+    bool requireAuth = false,
+  }) async {
     try {
+      var url = ApiEndpoints.liveCourses;
+      final normalizedCourseId = courseId?.trim();
+      if (normalizedCourseId != null && normalizedCourseId.isNotEmpty) {
+        final uri = Uri.parse(url).replace(
+          queryParameters: {
+            'courseId': normalizedCourseId,
+          },
+        );
+        url = uri.toString();
+      }
+
       final response = await ApiClient.instance.get(
-        ApiEndpoints.liveCourses,
-        requireAuth: true,
+        url,
+        requireAuth: requireAuth,
       );
-      
+
       if (response['success'] == true && response['data'] != null) {
         return response['data'] as Map<String, dynamic>;
       } else {

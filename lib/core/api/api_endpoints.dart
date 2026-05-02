@@ -91,11 +91,18 @@ class ApiEndpoints {
   static String exam(String id) => '$baseUrl/admin/exams/$id';
   static String startExam(String id) => '$baseUrl/admin/exams/$id/start';
   static String submitExam(String id) => '$baseUrl/admin/exams/$id/submit';
-  static String myExamResults({int page = 1, int perPage = 20, String? courseId}) {
+  static String myExamResults({
+    int page = 1,
+    int perPage = 20,
+    String? courseId,
+    bool? isPassed,
+  }) {
     final courseFilter = (courseId != null && courseId.isNotEmpty)
         ? '&course_id=$courseId'
         : '';
-    return '$baseUrl/my-exam-results?page=$page&per_page=$perPage$courseFilter';
+    final passedFilter =
+        isPassed == null ? '' : '&is_passed=${isPassed ? 'true' : 'false'}';
+    return '$baseUrl/my-exam-results?page=$page&per_page=$perPage$courseFilter$passedFilter';
   }
 
   /// Question banks (instructor/admin). Backend may implement list/create here

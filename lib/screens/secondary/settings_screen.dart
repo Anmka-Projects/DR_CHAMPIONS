@@ -25,11 +25,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _profile;
-  Map<String, dynamic>? _preferences;
-  bool _notifications = true;
-  bool _emailNotifications = true;
-  bool _pushNotifications = true;
-
   // QR Code for offline students
   String? _qrCode;
   bool _isLoadingQrCode = false;
@@ -97,10 +92,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       setState(() {
         _profile = profile;
-        _preferences = profile['preferences'] as Map<String, dynamic>?;
-        _emailNotifications = _preferences?['email_notifications'] ?? true;
-        _pushNotifications = _preferences?['push_notifications'] ?? true;
-        _notifications = _pushNotifications;
         _isLoading = false;
       });
 
@@ -163,52 +154,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _qrCodeError = e.toString().replaceFirst('Exception: ', '');
         _isLoadingQrCode = false;
       });
-    }
-  }
-
-  Future<void> _updatePreferences() async {
-    try {
-      await ProfileService.instance.updatePreferences(
-        emailNotifications: _emailNotifications,
-        pushNotifications: _pushNotifications,
-      );
-      if (kDebugMode) {
-        print('✅ Preferences updated');
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.preferencesUpdated,
-              style: GoogleFonts.cairo(),
-            ),
-            backgroundColor: const Color(0xFF10B981),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error updating preferences: $e');
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)!.errorUpdatingPreferences,
-              style: GoogleFonts.cairo(),
-            ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
     }
   }
 
@@ -427,37 +372,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
 
-                      // Chat - teacher/student messaging
-                      _buildSettingItem(
-                        icon: Icons.chat_bubble_rounded,
-                        label:
-                            Localizations.localeOf(context).languageCode == 'ar'
-                                ? 'المحادثات'
-                                : 'Chat',
-                        onTap: () => context.push(RouteNames.chatConversations),
-                      ),
-
                       // Language setting - matches React SettingItem
                       _buildSettingItem(
                         icon: Icons.language,
                         label: AppLocalizations.of(context)!.language,
                         value: _themeProvider.getLanguageName(),
                         onTap: () => _showLanguageDialog(),
-                      ),
-
-                      // Notifications toggle - matches React SettingItem with toggle
-                      _buildSettingItem(
-                        icon: Icons.notifications,
-                        label: AppLocalizations.of(context)!.notifications,
-                        hasToggle: true,
-                        toggleValue: _notifications,
-                        onToggle: () {
-                          setState(() {
-                            _notifications = !_notifications;
-                            _pushNotifications = _notifications;
-                          });
-                          _updatePreferences();
-                        },
                       ),
 
                       // Dark mode toggle - matches React SettingItem with toggle

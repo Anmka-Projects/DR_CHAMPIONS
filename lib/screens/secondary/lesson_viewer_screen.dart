@@ -22,6 +22,7 @@ import '../../core/resource_url_utils.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/courses_service.dart';
 import '../../services/exams_service.dart';
+import '../../services/lesson_bookmark_service.dart';
 import '../../services/lesson_resume_service.dart';
 import 'course_details_screen.dart';
 import '../../services/profile_service.dart';
@@ -73,8 +74,16 @@ bool _allowEmbeddedVimeoTopLevelNavigation(String rawUrl) {
 class LessonViewerScreen extends StatefulWidget {
   final Map<String, dynamic>? lesson;
   final String? courseId;
+  final List<Map<String, dynamic>> allLessons;
+  final int lessonIndex;
 
-  const LessonViewerScreen({super.key, this.lesson, this.courseId});
+  const LessonViewerScreen({
+    super.key,
+    this.lesson,
+    this.courseId,
+    this.allLessons = const [],
+    this.lessonIndex = -1,
+  });
 
   @override
   State<LessonViewerScreen> createState() => _LessonViewerScreenState();
@@ -120,7 +129,9 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   bool _consumedVideoResumeSeek = false;
   bool _isVimeoFullscreenActive = false;
   int _vimeoLastPositionSeconds = 0;
+  int _prevVimeoTimerCheckSeconds = 0;
   String? _lastLoadedVimeoEmbedUrl;
+  bool _isBookmarkedLesson = false;
 
   /// Avoid feedback when pausing the other player from exclusivity hooks.
   bool _silencingOtherPlayback = false;
@@ -150,6 +161,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         DateTime.now().millisecondsSinceEpoch.toString().substring(7);
     _loadWatermarkUserName();
     _initializeDownloadService();
+    unawaited(_syncBookmarkState());
     _loadLessonContent().then((_) {
       // Initialize video after content is loaded (or failed)
       // This ensures we can use video data from the API response
@@ -172,8 +184,65 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         _isLoadingLessonExams = false;
       });
       unawaited(_pausePlaybackOnLessonChange());
+      unawaited(_syncBookmarkState());
       unawaited(_reloadForNewLesson());
     }
+  }
+
+  String _bookmarkCourseId() {
+    final lesson = widget.lesson;
+    return widget.courseId ??
+        lesson?['course_id']?.toString() ??
+        lesson?['courseId']?.toString() ??
+        '';
+  }
+
+  Map<String, dynamic>? _buildBookmarkPayload() {
+    final lesson = widget.lesson;
+    if (lesson == null) return null;
+    final lessonId = lesson['id']?.toString() ?? '';
+    if (lessonId.isEmpty) return null;
+    final courseId = _bookmarkCourseId();
+    if (courseId.isEmpty) return null;
+    return {
+      'lessonId': lessonId,
+      'courseId': courseId,
+      'lessonTitle': lesson['title']?.toString() ?? '',
+      'lesson': {
+        ...lesson,
+        'course_id': courseId,
+      },
+    };
+  }
+
+  Future<void> _syncBookmarkState() async {
+    final lessonId = widget.lesson?['id']?.toString() ?? '';
+    if (lessonId.isEmpty) {
+      if (mounted) setState(() => _isBookmarkedLesson = false);
+      return;
+    }
+    final bookmarked = await LessonBookmarkService.instance.isBookmarked(lessonId);
+    if (!mounted) return;
+    setState(() => _isBookmarkedLesson = bookmarked);
+  }
+
+  Future<void> _toggleLessonBookmark() async {
+    final payload = _buildBookmarkPayload();
+    if (payload == null) return;
+    final isNowBookmarked =
+        await LessonBookmarkService.instance.toggleBookmark(payload);
+    if (!mounted) return;
+    setState(() => _isBookmarkedLesson = isNowBookmarked);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isNowBookmarked
+              ? 'Lesson added to bookmarks'
+              : 'Lesson removed from bookmarks',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _reloadForNewLesson() async {
@@ -451,6 +520,10 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       if (ws != null && ws > _watchedSeconds) {
         _watchedSeconds = ws;
       }
+      final savedMs = int.tryParse(saved['positionMs']?.toString() ?? '') ?? 0;
+      if (savedMs > 0) {
+        _vimeoLastPositionSeconds = (savedMs / 1000).floor();
+      }
     }
   }
 
@@ -514,6 +587,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         final pos = c.currentVideoPosition as Duration?;
         positionMs = pos?.inMilliseconds ?? 0;
       } catch (_) {}
+    } else if (_isVimeoVideo && _vimeoLastPositionSeconds > 0) {
+      positionMs = _vimeoLastPositionSeconds * 1000;
     } else if (_isAudioLesson && _audioPlayer != null) {
       positionMs = _audioPosition.inMilliseconds;
     }
@@ -536,25 +611,48 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
   Future<void> _persistResumeSnapshot(_LessonResumeSnapshot s) async {
     if (s.courseId.isEmpty || s.lessonId.isEmpty) return;
+    var snapshot = s;
+    if (_isVimeoVideo && _vimeoId != null) {
+      try {
+        final currentSeconds = await _readVimeoCurrentSeconds();
+        if (currentSeconds > 0) {
+          _vimeoLastPositionSeconds = currentSeconds;
+          final watched = snapshot.watchedSeconds > currentSeconds
+              ? snapshot.watchedSeconds
+              : currentSeconds;
+          snapshot = _LessonResumeSnapshot(
+            courseId: snapshot.courseId,
+            lessonId: snapshot.lessonId,
+            lessonTitle: snapshot.lessonTitle,
+            positionMs: currentSeconds * 1000,
+            videoIndex: snapshot.videoIndex,
+            audioIndex: snapshot.audioIndex,
+            watchedSeconds: watched,
+            lessonMarkedComplete: snapshot.lessonMarkedComplete,
+          );
+        }
+      } catch (_) {}
+    }
     try {
       await LessonResumeService.instance.saveLastOpenedLesson(
-        courseId: s.courseId,
-        lessonId: s.lessonId,
-        lessonTitle: s.lessonTitle,
-        positionMs: s.positionMs,
-        videoIndex: s.videoIndex,
-        audioIndex: s.audioIndex,
-        watchedSeconds: s.watchedSeconds,
-        markLessonCompletedId: s.lessonMarkedComplete ? s.lessonId : null,
+        courseId: snapshot.courseId,
+        lessonId: snapshot.lessonId,
+        lessonTitle: snapshot.lessonTitle,
+        positionMs: snapshot.positionMs,
+        videoIndex: snapshot.videoIndex,
+        audioIndex: snapshot.audioIndex,
+        watchedSeconds: snapshot.watchedSeconds,
+        markLessonCompletedId:
+            snapshot.lessonMarkedComplete ? snapshot.lessonId : null,
       );
     } catch (_) {}
 
-    if (!s.lessonMarkedComplete) {
+    if (!snapshot.lessonMarkedComplete) {
       try {
         await CoursesService.instance.updateLessonProgress(
-          s.courseId,
-          s.lessonId,
-          watchedSeconds: s.watchedSeconds,
+          snapshot.courseId,
+          snapshot.lessonId,
+          watchedSeconds: snapshot.watchedSeconds,
           isCompleted: false,
         );
       } catch (_) {}
@@ -815,8 +913,21 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
 
   void _startProgressTracking() {
     _progressTimer?.cancel();
+
+    // Non-media lessons (text / PDF / images only): mark complete after 5 s.
+    if (!_hasAnyVideoSource() && _allAudioUrls.isEmpty) {
+      Future.delayed(const Duration(seconds: 5), () {
+        if (!mounted || _lessonMarkedComplete) return;
+        unawaited(_markLessonComplete());
+      });
+      return;
+    }
+
     _progressTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       bool isPlaying = false;
+      int secondsToAdd = 30;
+
+      // PodPlayer (YouTube / direct MP4)
       if (_controller != null) {
         try {
           final dynamic dynamicController = _controller!;
@@ -825,8 +936,30 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
           isPlaying = false;
         }
       }
+
+      // Vimeo: detect playback by time advancement
+      if (!isPlaying && _isVimeoVideo) {
+        try {
+          final prev = _prevVimeoTimerCheckSeconds;
+          final current = await _readVimeoCurrentSeconds();
+          _prevVimeoTimerCheckSeconds = current;
+          if (current > prev + 4) {
+            secondsToAdd = (current - prev).clamp(0, 35);
+            _watchedSeconds += secondsToAdd;
+            isPlaying = true;
+          }
+        } catch (_) {}
+      }
+
+      // Audio player
+      if (!isPlaying && _isAudioLesson && _audioPlayer != null) {
+        try {
+          if (_audioPlayer!.playing) isPlaying = true;
+        } catch (_) {}
+      }
+
       if (isPlaying) {
-        _watchedSeconds += 30;
+        if (!_isVimeoVideo) _watchedSeconds += 30;
         try {
           await CoursesService.instance.updateLessonProgress(
             widget.courseId ?? widget.lesson?['course_id']?.toString() ?? '',
@@ -1585,6 +1718,11 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       }
       audioWasPlaying = playing;
       setState(() => _isAudioPlaying = playing);
+    });
+    _audioPlayer!.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        unawaited(_markLessonComplete());
+      }
     });
   }
 
@@ -2992,7 +3130,8 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
     if (_isAudioLesson) return _buildAudioPlayer();
 
     if (_isVimeoVideo && _vimeoId != null) {
-      final embedUrl = _buildVimeoEmbedUrl();
+      final embedUrl =
+          _buildVimeoEmbedUrl(startAtSeconds: _vimeoLastPositionSeconds);
       final html = '''
 <!DOCTYPE html>
 <html>
@@ -3078,10 +3217,19 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
       } catch (_) {}
     });
     player.on('play', async function () {
+      window.vimeoIsPlaying = true;
       try {
         await player.setVolume(1);
         await player.setMuted(false);
       } catch (_) {}
+    });
+    player.on('pause', function () {
+      window.vimeoIsPlaying = false;
+    });
+    player.on('ended', function () {
+      window.vimeoIsPlaying = false;
+      window.vimeoEnded = true;
+      try { FlutterBridge.postMessage('vimeo_ended'); } catch (_) {}
     });
     player.on('timeupdate', function (data) {
       try {
@@ -3116,6 +3264,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
         _webViewController = WebViewController()
           ..setJavaScriptMode(JavaScriptMode.unrestricted)
           ..setBackgroundColor(Colors.black)
+          ..addJavaScriptChannel(
+            'FlutterBridge',
+            onMessageReceived: (JavaScriptMessage msg) {
+              if (msg.message == 'vimeo_ended' && !_lessonMarkedComplete) {
+                unawaited(_markLessonComplete());
+              }
+            },
+          )
           ..setNavigationDelegate(
             NavigationDelegate(
               onNavigationRequest: (request) {
@@ -3127,6 +3283,14 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                       '🔒 Blocked Vimeo top-level navigation: ${request.url}');
                 }
                 return NavigationDecision.prevent;
+              },
+              onPageFinished: (_) {
+                if (_vimeoLastPositionSeconds > 0) {
+                  Future.delayed(const Duration(milliseconds: 350), () {
+                    if (!mounted) return;
+                    unawaited(_seekVimeoToSeconds(_vimeoLastPositionSeconds));
+                  });
+                }
               },
             ),
           );
@@ -3191,6 +3355,21 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
                         ),
                       ),
                     ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: _isBookmarkedLesson
+                      ? 'Remove bookmark'
+                      : 'Bookmark lesson',
+                  onPressed: _toggleLessonBookmark,
+                  icon: Icon(
+                    _isBookmarkedLesson
+                        ? Icons.bookmark_rounded
+                        : Icons.bookmark_border_rounded,
+                    color: _isBookmarkedLesson
+                        ? const Color(0xFFF59E0B)
+                        : Colors.white,
+                    size: 24,
                   ),
                 ),
                 if (_controller != null)
@@ -4675,28 +4854,47 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             const SizedBox(height: 4),
 
             // Navigation Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: _buildNavButton(
-                    AppLocalizations.of(context)!.previousLesson,
-                    Icons.arrow_forward_rounded,
-                    false,
-                    () => context.pop(),
+            Builder(builder: (context) {
+              final allLessons = widget.allLessons;
+              final idx = widget.lessonIndex;
+              final hasPrev = idx > 0 && allLessons.isNotEmpty;
+              final hasNext =
+                  idx >= 0 && idx < allLessons.length - 1;
+
+              void goToLesson(int targetIndex) {
+                final targetLesson = allLessons[targetIndex];
+                context.pushReplacement(RouteNames.lessonViewer, extra: {
+                  'lesson': targetLesson,
+                  'courseId': widget.courseId,
+                  'allLessons': allLessons,
+                  'lessonIndex': targetIndex,
+                });
+              }
+
+              return Row(
+                children: [
+                  Expanded(
+                    child: _buildNavButton(
+                      AppLocalizations.of(context)!.previousLesson,
+                      Icons.arrow_back_rounded,
+                      false,
+                      hasPrev
+                          ? () => goToLesson(idx - 1)
+                          : () => context.pop(),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 1,
-                  child: _buildNavButton(
-                    AppLocalizations.of(context)!.nextLesson,
-                    Icons.arrow_back_rounded,
-                    true,
-                    () => context.pop(),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildNavButton(
+                      AppLocalizations.of(context)!.nextLesson,
+                      Icons.arrow_forward_rounded,
+                      true,
+                      hasNext ? () => goToLesson(idx + 1) : null,
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              );
+            }),
             const SizedBox(height: 20),
           ],
         ),
@@ -5533,10 +5731,13 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
   }
 
   Widget _buildNavButton(
-      String text, IconData icon, bool isPrimary, VoidCallback onTap) {
+      String text, IconData icon, bool isPrimary, VoidCallback? onTap) {
+    final disabled = onTap == null;
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: Opacity(
+        opacity: disabled ? 0.45 : 1.0,
+        child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
           gradient: isPrimary
@@ -5573,6 +5774,7 @@ class _LessonViewerScreenState extends State<LessonViewerScreen>
             if (isPrimary) Icon(icon, size: 18, color: Colors.white),
           ],
         ),
+      ),
       ),
     );
   }

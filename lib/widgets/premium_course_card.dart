@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/course_pricing.dart';
 import '../core/design/app_colors.dart';
-import '../l10n/app_localizations_en.dart';
+import '../l10n/app_localizations.dart';
 
 /// Premium Course Card - Modern and Attractive Design
 class PremiumCourseCard extends StatelessWidget {
@@ -18,10 +18,11 @@ class PremiumCourseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10nEn = AppLocalizationsEn();
+    final l10n = AppLocalizations.of(context)!;
     final isAr = Localizations.localeOf(context).languageCode == 'ar';
     final isFree = courseIsEffectivelyFree(course);
     final hasPricePlans = courseHasSubscriptionPlans(course);
+    final hidePriceBadge = courseHasPlansWithZeroBasePrice(course);
     final imagePath = course['thumbnail'] ?? course['image'] ?? '';
     final categoryName = courseCategoryEnglishLabel(course['category']);
     final title = course['title'] ?? '';
@@ -172,37 +173,44 @@ class PremiumCourseCard extends StatelessWidget {
                 ),
 
                 // Price/Free Badge
-                Positioned(
-                  top: 12,
-                  left: 12,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      gradient: isFree
-                          ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
-                          : const LinearGradient(colors: [Color(0xFFF59E0B), Color(0xFFD97706)]),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (isFree ? const Color(0xFF10B981) : const Color(0xFFF59E0B)).withOpacity(0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
+                if (!hidePriceBadge)
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        gradient: isFree
+                            ? const LinearGradient(
+                                colors: [Color(0xFF10B981), Color(0xFF059669)])
+                            : const LinearGradient(
+                                colors: [Color(0xFFF59E0B), Color(0xFFD97706)]),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: ((isFree
+                                    ? const Color(0xFF10B981)
+                                    : const Color(0xFFF59E0B)))
+                                .withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        isFree ? l10n.free : paidPriceLabel,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.cairo(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
                         ),
-                      ],
-                    ),
-                    child: Text(
-                      isFree ? l10nEn.free : paidPriceLabel,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.cairo(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
                       ),
                     ),
                   ),
-                ),
 
                 if (hasPricePlans)
                   Positioned(
@@ -358,7 +366,7 @@ class PremiumCourseCard extends StatelessWidget {
                       Icon(Icons.access_time_rounded, size: 14, color: Colors.grey[400]),
                       const SizedBox(width: 3),
                       Text(
-                        l10nEn.hoursUnitShort(hours),
+                        l10n.hoursUnitShort(hours),
                         style: GoogleFonts.cairo(fontSize: 11, color: AppColors.mutedForeground),
                       ),
                       const SizedBox(width: 8),
@@ -366,7 +374,7 @@ class PremiumCourseCard extends StatelessWidget {
                       Icon(Icons.menu_book_rounded, size: 14, color: Colors.grey[400]),
                       const SizedBox(width: 3),
                       Text(
-                        l10nEn.lessonsCount(
+                        l10n.lessonsCount(
                           () {
                             if (lessons is int) return lessons;
                             if (lessons is num) return lessons.toInt();

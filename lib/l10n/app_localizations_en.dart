@@ -1461,6 +1461,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get remindMe => 'Remind Me';
 
   @override
+  String get enterTheSession => 'Enter the session';
+
+  @override
   String get joinNow => 'Join Now';
 
   @override

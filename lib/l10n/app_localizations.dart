@@ -2606,6 +2606,12 @@ abstract class AppLocalizations {
   /// **'Remind Me'**
   String get remindMe;
 
+  /// Button shown when a live session is available to join
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the session'**
+  String get enterTheSession;
+
   /// Join Now
   ///
   /// In en, this message translates to:

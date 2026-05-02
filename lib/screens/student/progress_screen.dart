@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import '../../core/design/app_colors.dart';
 import '../../core/design/app_text_styles.dart';
 import '../../core/navigation/route_names.dart';
 import '../../widgets/bottom_nav.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/progress_service.dart';
+import '../../services/courses_service.dart';
 
 /// Progress Screen - Pixel-perfect match to React version
 /// Matches: components/screens/progress-screen.tsx
@@ -16,23 +20,60 @@ class ProgressScreen extends StatefulWidget {
   State<ProgressScreen> createState() => _ProgressScreenState();
 }
 
-class _ProgressScreenState extends State<ProgressScreen> {
+class _ProgressScreenState extends State<ProgressScreen>
+    with WidgetsBindingObserver {
   String _period = 'weekly';
   String _selectedSubjectKey = 'all';
   bool _isLoading = true;
+  bool _isLoadingEnrollments = true;
   String? _error;
   Map<String, dynamic>? _progressData;
+  List<Map<String, dynamic>> _enrolledCourses = [];
+  Map<String, dynamic>? _selectedCourse;
 
   // Chart data from API
   List<Map<String, dynamic>> _chartData = [];
 
   // Top students from API
   List<Map<String, dynamic>> _topStudents = [];
+  Timer? _autoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _fetchProgressData();
+    _fetchEnrollments();
+    _startAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshProgressState();
+    }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (!mounted) return;
+      _refreshProgressState();
+    });
+  }
+
+  Future<void> _refreshProgressState() async {
+    await Future.wait([
+      _fetchEnrollments(),
+      _fetchProgressData(),
+    ]);
   }
 
   Future<void> _fetchProgressData() async {
@@ -43,11 +84,11 @@ class _ProgressScreenState extends State<ProgressScreen> {
 
     try {
       final data = await ProgressService.instance.getProgressData(_period);
+      if (!mounted) return;
       setState(() {
         _progressData = data;
         _isLoading = false;
 
-        // Extract chart data based on period
         if (data['chart_data'] != null) {
           final chartData = data['chart_data'] as Map<String, dynamic>;
           _chartData = List<Map<String, dynamic>>.from(
@@ -55,7 +96,6 @@ class _ProgressScreenState extends State<ProgressScreen> {
           );
         }
 
-        // Extract top students
         if (data['top_students'] != null) {
           _topStudents = List<Map<String, dynamic>>.from(
             data['top_students'] as List? ?? [],
@@ -63,10 +103,69 @@ class _ProgressScreenState extends State<ProgressScreen> {
         }
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _fetchEnrollments() async {
+    setState(() => _isLoadingEnrollments = true);
+    try {
+      final result = await CoursesService.instance.getEnrollments(
+        status: 'all',
+        page: 1,
+        perPage: 100,
+      );
+      if (!mounted) return;
+      final List<Map<String, dynamic>> courses = [];
+      final dynamic data = result['data'];
+
+      if (data is List) {
+        for (final item in data) {
+          if (item is Map<String, dynamic>) courses.add(item);
+        }
+      } else if (data is Map<String, dynamic>) {
+        final nested = data['courses'] ?? data['enrollments'] ?? data['items'];
+        if (nested is List) {
+          for (final item in nested) {
+            if (item is Map<String, dynamic>) courses.add(item);
+          }
+        }
+      }
+
+      final direct = result['enrollments'];
+      if (courses.isEmpty && direct is List) {
+        for (final item in direct) {
+          if (item is Map<String, dynamic>) courses.add(item);
+        }
+      }
+      setState(() {
+        _enrolledCourses = courses;
+        _isLoadingEnrollments = false;
+        final selectedExists = _selectedSubjectKey == 'all' ||
+            courses.any((e) => _courseId(e) == _selectedSubjectKey);
+        if (!selectedExists) {
+          _selectedSubjectKey = 'all';
+        }
+        if (courses.isNotEmpty) {
+          if (_selectedSubjectKey == 'all') {
+            _selectedCourse = courses.first;
+          } else {
+            _selectedCourse = courses.firstWhere(
+              (e) => _courseId(e) == _selectedSubjectKey,
+              orElse: () => courses.first,
+            );
+          }
+        } else {
+          _selectedCourse = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingEnrollments = false);
     }
   }
 
@@ -81,14 +180,17 @@ class _ProgressScreenState extends State<ProgressScreen> {
 
   List<Map<String, String>> _subjectOptions(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return [
+    final all = [
       {'key': 'all', 'label': l10n.allSubjects},
-      {'key': 'literature', 'label': l10n.literature},
-      {'key': 'math', 'label': l10n.math},
-      {'key': 'biology', 'label': l10n.biology},
-      {'key': 'physics', 'label': l10n.physics},
-      {'key': 'chemistry', 'label': l10n.chemistry},
     ];
+    for (final enrollment in _enrolledCourses) {
+      final id = _courseId(enrollment);
+      final title = _courseTitle(enrollment);
+      if (id.isNotEmpty) {
+        all.add({'key': id, 'label': title});
+      }
+    }
+    return all;
   }
 
   String _selectedSubjectLabel(BuildContext context) {
@@ -97,6 +199,13 @@ class _ProgressScreenState extends State<ProgressScreen> {
       (o) => o['key'] == _selectedSubjectKey,
       orElse: () => options.first,
     )['label']!;
+  }
+
+  List<Map<String, dynamic>> _displayedEnrollments() {
+    if (_selectedSubjectKey == 'all') return _enrolledCourses;
+    return _enrolledCourses
+        .where((e) => _courseId(e) == _selectedSubjectKey)
+        .toList();
   }
 
   @override
@@ -171,6 +280,22 @@ class _ProgressScreenState extends State<ProgressScreen> {
                                             }
                                             setState(() {
                                               _selectedSubjectKey = value;
+                                              if (value == 'all') {
+                                                _selectedCourse =
+                                                    _enrolledCourses.isNotEmpty
+                                                        ? _enrolledCourses.first
+                                                        : null;
+                                              } else {
+                                                _selectedCourse = _enrolledCourses
+                                                    .firstWhere(
+                                                  (e) =>
+                                                      _courseId(e) == value,
+                                                  orElse: () => _enrolledCourses
+                                                          .isNotEmpty
+                                                      ? _enrolledCourses.first
+                                                      : <String, dynamic>{},
+                                                );
+                                              }
                                             });
                                           },
                                           itemBuilder: (context) {
@@ -485,7 +610,14 @@ class _ProgressScreenState extends State<ProgressScreen> {
                                         ],
                                       ),
                                     ),
-                                    const SizedBox(height: 16), // space-y-4
+                                    const SizedBox(height: 20),
+
+                                    // ──────────────────────────────────────
+                                    // My Courses Progress
+                                    // ──────────────────────────────────────
+                                    _buildCoursesProgressSection(context),
+
+                                    const SizedBox(height: 16),
 
                                     // Rating of students - matches React: bg-white rounded-3xl p-5 shadow-sm
                                     Container(
@@ -810,7 +942,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
                     children: [
                       Text(
                         userName.isNotEmpty
-                            ? 'مرحباً، $userName'
+                            ? 'Hello, $userName'
                             : AppLocalizations.of(context)!.helloJacob,
                         style: AppTextStyles.h4(color: AppColors.foreground),
                         maxLines: 1,
@@ -843,76 +975,530 @@ class _ProgressScreenState extends State<ProgressScreen> {
               ],
             ),
           ),
-          Flexible(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 44, // w-11
-                  height: 44, // h-11
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.verified_user,
+              size: 20,
+              color: AppColors.purple,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Courses Progress Section
+  // ──────────────────────────────────────────────────────────────────────────
+
+  String _courseTitle(Map<String, dynamic> enrollment) {
+    final course = enrollment['course'];
+    if (course is Map) {
+      return course['title']?.toString() ??
+          course['name']?.toString() ??
+          enrollment['title']?.toString() ??
+          enrollment['course_title']?.toString() ??
+          '';
+    }
+    return enrollment['title']?.toString() ??
+        enrollment['course_title']?.toString() ??
+        '';
+  }
+
+  String? _courseThumbnail(Map<String, dynamic> enrollment) {
+    final course = enrollment['course'];
+    if (course is Map) {
+      return course['thumbnail']?.toString() ??
+          course['image']?.toString() ??
+          course['cover_image']?.toString();
+    }
+    return enrollment['thumbnail']?.toString() ?? enrollment['image']?.toString();
+  }
+
+  String _courseId(Map<String, dynamic> enrollment) {
+    final course = enrollment['course'];
+    if (course is Map) {
+      return course['id']?.toString() ?? enrollment['course_id']?.toString() ?? '';
+    }
+    return enrollment['course_id']?.toString() ??
+        enrollment['id']?.toString() ??
+        '';
+  }
+
+  double _courseProgress(Map<String, dynamic> enrollment) {
+    final status = enrollment['status']?.toString().toLowerCase();
+    if (status == 'completed') return 100.0;
+
+    final completed = _completedLessons(enrollment);
+    final total = _totalLessons(enrollment);
+    if (total > 0 && completed >= total) return 100.0;
+
+    final courseProgress = enrollment['course_progress'];
+    if (courseProgress is Map) {
+      final cp = courseProgress['percentage'] ?? courseProgress['progress'];
+      if (cp is num) return cp.toDouble().clamp(0.0, 100.0);
+      if (cp is String) {
+        final parsed = double.tryParse(cp);
+        if (parsed != null) return parsed.clamp(0.0, 100.0);
+      }
+    }
+
+    final raw = enrollment['progress'] ??
+        enrollment['completion_percentage'] ??
+        enrollment['progress_percentage'];
+    if (raw == null) return 0.0;
+    if (raw is num) return raw.toDouble().clamp(0.0, 100.0);
+    if (raw is String) {
+      final parsed = double.tryParse(raw);
+      if (parsed != null) return parsed.clamp(0.0, 100.0);
+    }
+    return 0.0;
+  }
+
+  int _completedLessons(Map<String, dynamic> enrollment) {
+    final v = enrollment['completed_lessons'] ??
+        enrollment['completed_lessons_count'];
+    if (v == null) return 0;
+    return (v as num).toInt();
+  }
+
+  int _totalLessons(Map<String, dynamic> enrollment) {
+    final v = enrollment['total_lessons'] ??
+        enrollment['lessons_count'] ??
+        enrollment['total_lessons_count'];
+    if (v == null) return 0;
+    return (v as num).toInt();
+  }
+
+  int _watchedMinutes(Map<String, dynamic> enrollment) {
+    // Server may return watched_minutes, watched_seconds, or total_watch_time
+    final mins = enrollment['watched_minutes'] ?? enrollment['total_watch_time'];
+    if (mins != null) return (mins as num).toInt();
+    final secs = enrollment['watched_seconds'];
+    if (secs != null) return ((secs as num).toDouble() / 60).ceil();
+    return 0;
+  }
+
+  Widget _buildCoursesProgressSection(BuildContext context) {
+    final displayedCourses = _displayedEnrollments();
+    final selectedInDisplayed = _selectedCourse != null &&
+        displayedCourses
+            .any((e) => _courseId(e) == _courseId(_selectedCourse!));
+    final effectiveSelectedCourse = selectedInDisplayed
+        ? _selectedCourse
+        : (displayedCourses.isNotEmpty ? displayedCourses.first : null);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Section header
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'My Courses Progress',
+              style: AppTextStyles.h4(color: AppColors.foreground),
+            ),
+            if (displayedCourses.length > 1)
+              GestureDetector(
+                onTap: () => context.push(RouteNames.enrolled),
+                child: Text(
+                  'View all',
+                  style: AppTextStyles.bodySmall(color: AppColors.purple)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // Courses horizontal scroll picker
+        if (_isLoadingEnrollments)
+          SizedBox(
+            height: 48,
+            child: Skeletonizer(
+              enabled: true,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: 3,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, __) => Container(
+                  width: 140,
+                  height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.verified_user,
-                    size: 20, // w-5 h-5
-                    color: AppColors.purple,
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(24),
                   ),
                 ),
-                const SizedBox(width: 8), // gap-2
-                GestureDetector(
-                  onTap: () => context.push(RouteNames.notifications),
-                  child: Container(
-                    width: 44, // w-11
-                    height: 44, // h-11
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Stack(
-                      children: [
-                        const Center(
-                          child: Icon(
-                            Icons.notifications,
-                            size: 20, // w-5 h-5
-                            color: AppColors.foreground,
-                          ),
-                        ),
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Container(
-                            width: 8, // w-2
-                            height: 8, // h-2
-                            decoration: const BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+              ),
+            ),
+          )
+        else if (displayedCourses.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.school_outlined, color: Colors.grey[400], size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'You have not enrolled in any course yet',
+                  style: AppTextStyles.bodySmall(
+                    color: AppColors.mutedForeground,
                   ),
                 ),
               ],
             ),
+          )
+        else ...[
+          // Horizontal scrollable course chips
+          SizedBox(
+            height: 48,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: displayedCourses.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, idx) {
+                final enrollment = displayedCourses[idx];
+                final title = _courseTitle(enrollment);
+                final isSelected =
+                    _courseId(enrollment) ==
+                        _courseId(effectiveSelectedCourse ?? {});
+                return GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedCourse = enrollment);
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isSelected ? AppColors.purple : Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.06),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.purple
+                            : Colors.grey.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Text(
+                      title.isNotEmpty ? title : 'Course',
+                      style: AppTextStyles.bodySmall(
+                        color: isSelected ? Colors.white : AppColors.foreground,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
+          const SizedBox(height: 12),
+
+          // Selected course progress card
+          if (effectiveSelectedCourse != null)
+            _buildSelectedCourseCard(context, effectiveSelectedCourse),
         ],
+      ],
+    );
+  }
+
+  Widget _buildSelectedCourseCard(
+      BuildContext context, Map<String, dynamic> enrollment) {
+    final title = _courseTitle(enrollment);
+    final thumbnail = _courseThumbnail(enrollment);
+    final progress = _courseProgress(enrollment);
+    final completed = _completedLessons(enrollment);
+    final total = _totalLessons(enrollment);
+    final watchedMins = _watchedMinutes(enrollment);
+    final courseId = _courseId(enrollment);
+
+    final progressFraction = progress / 100.0;
+    final Color progressColor = progress >= 80
+        ? Colors.green
+        : progress >= 40
+            ? AppColors.orange
+            : AppColors.purple;
+
+    return GestureDetector(
+      onTap: () {
+        final courseMap = enrollment['course'];
+        if (courseMap is Map<String, dynamic>) {
+          context.push(RouteNames.courseDetails, extra: courseMap);
+        } else if (courseId.isNotEmpty) {
+          context.push(RouteNames.courseDetails, extra: enrollment);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Course title row + thumbnail
+            Row(
+              children: [
+                // Thumbnail
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 60,
+                    height: 60,
+                    color: AppColors.purpleLight,
+                    child: thumbnail != null && thumbnail.isNotEmpty
+                        ? Image.network(
+                            thumbnail,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.play_circle_outline,
+                              color: AppColors.purple,
+                              size: 28,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.play_circle_outline,
+                            color: AppColors.purple,
+                            size: 28,
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                // Title + lessons count
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title.isNotEmpty ? title : 'Course',
+                        style: AppTextStyles.bodyMedium(
+                          color: AppColors.foreground,
+                        ).copyWith(fontWeight: FontWeight.bold),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (total > 0) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '$completed / $total lessons completed',
+                          style: AppTextStyles.bodySmall(
+                            color: AppColors.mutedForeground,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                // Progress circle
+                SizedBox(
+                  width: 52,
+                  height: 52,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      CircularProgressIndicator(
+                        value: progressFraction.clamp(0.0, 1.0),
+                        strokeWidth: 5,
+                        backgroundColor: Colors.grey[200],
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(progressColor),
+                      ),
+                      Text(
+                        '${progress.toInt()}%',
+                        style: GoogleFonts.cairo(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: progressColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            // Progress bar
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Progress',
+                      style: AppTextStyles.labelSmall(
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                    Text(
+                      '${progress.toInt()}%',
+                      style: AppTextStyles.labelSmall(
+                        color: progressColor,
+                      ).copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: progressFraction.clamp(0.0, 1.0),
+                    minHeight: 8,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 14),
+
+            // Stats row
+            Row(
+              children: [
+                _buildStatChip(
+                  icon: Icons.check_circle_outline_rounded,
+                  value: '$completed',
+                  label: 'Completed lessons',
+                  color: Colors.green,
+                ),
+                const SizedBox(width: 10),
+                _buildStatChip(
+                  icon: Icons.access_time_rounded,
+                  value: watchedMins >= 60
+                      ? '${(watchedMins / 60).toStringAsFixed(1)} hrs'
+                      : '$watchedMins mins',
+                  label: 'Watch time',
+                  color: AppColors.orange,
+                ),
+                if (total > 0) ...[
+                  const SizedBox(width: 10),
+                  _buildStatChip(
+                    icon: Icons.menu_book_rounded,
+                    value: '$total',
+                    label: 'Total lessons',
+                    color: AppColors.purple,
+                  ),
+                ],
+              ],
+            ),
+
+            const SizedBox(height: 14),
+
+            // Continue button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  final courseMap = enrollment['course'];
+                  if (courseMap is Map<String, dynamic>) {
+                    context.push(RouteNames.courseDetails, extra: courseMap);
+                  } else if (courseId.isNotEmpty) {
+                    context.push(RouteNames.courseDetails, extra: enrollment);
+                  }
+                },
+                icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                label: Text(
+                  progress == 0 ? 'Start course' : 'Resume course',
+                  style: GoogleFonts.cairo(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatChip({
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color color,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: GoogleFonts.cairo(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            Text(
+              label,
+              style: AppTextStyles.labelSmall(
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

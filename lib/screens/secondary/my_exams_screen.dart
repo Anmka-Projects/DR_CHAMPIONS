@@ -19,7 +19,10 @@ class MyExamsScreen extends StatefulWidget {
 
 class _MyExamsScreenState extends State<MyExamsScreen> {
   bool _isLoading = true;
-  List<Map<String, dynamic>> _completedExams = [];
+  List<Map<String, dynamic>> _attempts = [];
+  Map<String, dynamic> _stats = {};
+  Map<String, dynamic> _meta = {};
+  bool? _isPassedFilter;
 
   @override
   void initState() {
@@ -30,20 +33,30 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
   Future<void> _loadExams() async {
     setState(() => _isLoading = true);
     try {
-      final response = await ExamsService.instance.getMyExams();
+      final response = await ExamsService.instance.getMyExams(
+        page: 1,
+        perPage: 20,
+        isPassed: _isPassedFilter,
+      );
 
       if (kDebugMode) {
-        print('✅ Exams loaded: ${response['completed']?.length ?? 0}');
+        print('✅ Exams loaded: ${response['attempts']?.length ?? 0}');
       }
 
       setState(() {
-        if (response['completed'] is List) {
-          _completedExams = List<Map<String, dynamic>>.from(
-            response['completed'] as List,
+        if (response['attempts'] is List) {
+          _attempts = List<Map<String, dynamic>>.from(
+            response['attempts'] as List,
           );
         } else {
-          _completedExams = [];
+          _attempts = [];
         }
+        _stats = response['stats'] is Map<String, dynamic>
+            ? Map<String, dynamic>.from(response['stats'] as Map<String, dynamic>)
+            : {};
+        _meta = response['meta'] is Map<String, dynamic>
+            ? Map<String, dynamic>.from(response['meta'] as Map<String, dynamic>)
+            : {};
         _isLoading = false;
       });
     } catch (e) {
@@ -51,7 +64,9 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
         print('❌ Error loading exams: $e');
       }
       setState(() {
-        _completedExams = [];
+        _attempts = [];
+        _stats = {};
+        _meta = {};
         _isLoading = false;
       });
     }
@@ -87,12 +102,17 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final passedCount = _completedExams
-        .where((e) => e['is_passed'] == true || e['passed'] == true)
-        .length;
-    final failedCount = _completedExams
-        .where((e) => e['is_passed'] != true && e['passed'] != true)
-        .length;
+    final passedCount = (_stats['passed'] as num?)?.toInt() ??
+        _attempts
+            .where((e) => e['is_passed'] == true || e['passed'] == true)
+            .length;
+    final failedCount = (_stats['failed'] as num?)?.toInt() ??
+        _attempts
+            .where((e) => e['is_passed'] != true && e['passed'] != true)
+            .length;
+    final totalAttempts = (_stats['total_attempts'] as num?)?.toInt() ??
+        (_meta['total'] as num?)?.toInt() ??
+        _attempts.length;
 
     return Scaffold(
       backgroundColor: AppColors.beige,
@@ -100,10 +120,14 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
         top: false,
         child: Column(
           children: [
-            // Header - matches React: bg-[var(--orange)] rounded-b-[3rem] pt-4 pb-8 px-4
+            // Header aligned with app primary palette
             Container(
               decoration: const BoxDecoration(
-                color: AppColors.orange, // Orange header!
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.primary, AppColors.primaryDark],
+                ),
                 borderRadius: BorderRadius.only(
                   bottomLeft: Radius.circular(AppRadius.largeCard),
                   bottomRight: Radius.circular(AppRadius.largeCard),
@@ -161,7 +185,7 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
                 offset: const Offset(0, -24), // -mt-6
                 child: _isLoading
                     ? _buildLoadingState()
-                    : _completedExams.isEmpty
+                    : _attempts.isEmpty
                         ? _buildEmptyState()
                         : RefreshIndicator(
                             onRefresh: _loadExams,
@@ -171,6 +195,42 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
                               physics: const AlwaysScrollableScrollPhysics(),
                               child: Column(
                                 children: [
+                                  Container(
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    child: Row(
+                                      children: [
+                                        _buildFilterChip(
+                                          label: context.l10n.totalExams,
+                                          selected: _isPassedFilter == null,
+                                          onTap: () {
+                                            if (_isPassedFilter == null) return;
+                                            setState(() => _isPassedFilter = null);
+                                            _loadExams();
+                                          },
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _buildFilterChip(
+                                          label: context.l10n.passed,
+                                          selected: _isPassedFilter == true,
+                                          onTap: () {
+                                            if (_isPassedFilter == true) return;
+                                            setState(() => _isPassedFilter = true);
+                                            _loadExams();
+                                          },
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _buildFilterChip(
+                                          label: context.l10n.failed,
+                                          selected: _isPassedFilter == false,
+                                          onTap: () {
+                                            if (_isPassedFilter == false) return;
+                                            setState(() => _isPassedFilter = false);
+                                            _loadExams();
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                   // Stats Card - matches React: bg-white rounded-3xl p-5 shadow-lg grid grid-cols-3
                                   Container(
                                     margin: const EdgeInsets.only(
@@ -195,7 +255,7 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
                                           child: Column(
                                             children: [
                                               Text(
-                                                '${_completedExams.length}',
+                                                '$totalAttempts',
                                                 style: AppTextStyles.h2(
                                                   color: AppColors.purple,
                                                 ),
@@ -258,7 +318,7 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
                                   ),
 
                                   // Exams List - matches React: space-y-4
-                                  ..._completedExams
+                                  ..._attempts
                                       .map((exam) => _buildExamCard(context, exam)),
 
                                   const SizedBox(height: 32),
@@ -275,8 +335,12 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
   }
 
   Widget _buildExamCard(BuildContext context, Map<String, dynamic> exam) {
+    final examObj = exam['exam'] is Map<String, dynamic>
+        ? exam['exam'] as Map<String, dynamic>
+        : <String, dynamic>{};
     final passed = exam['is_passed'] == true || exam['passed'] == true;
-    final score = (exam['score'] as num?)?.toInt() ??
+    final score = (exam['percentage'] as num?)?.toInt() ??
+        (exam['score'] as num?)?.toInt() ??
         (exam['best_score'] as num?)?.toInt() ??
         0;
     final totalQuestions = exam['total_questions'] as int? ??
@@ -285,7 +349,9 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
         0;
     final correctAnswers =
         exam['correct_answers'] as int? ?? exam['correctAnswers'] as int? ?? 0;
-    final examTitle = exam['title']?.toString() ?? context.l10n.exam;
+    final examTitle = examObj['title']?.toString() ??
+        exam['title']?.toString() ??
+        context.l10n.exam;
     final completedAt = exam['completed_at']?.toString() ??
         exam['submitted_at']?.toString() ??
         exam['date']?.toString();
@@ -419,6 +485,35 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.primary : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? AppColors.primary : Colors.black12,
+            ),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: AppTextStyles.labelSmall(
+              color: selected ? Colors.white : AppColors.foreground,
+            ).copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
       ),
     );
   }
@@ -594,13 +689,13 @@ class _MyExamsScreenState extends State<MyExamsScreen> {
             width: 120,
             height: 120,
             decoration: BoxDecoration(
-              color: AppColors.orange.withOpacity(0.1),
+              color: AppColors.primary.withOpacity(0.1),
               shape: BoxShape.circle,
             ),
             child: const Icon(
               Icons.quiz_rounded,
               size: 60,
-              color: AppColors.orange,
+              color: AppColors.primary,
             ),
           ),
           const SizedBox(height: 24),

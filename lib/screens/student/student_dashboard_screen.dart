@@ -10,7 +10,10 @@ import '../../core/navigation/route_names.dart';
 import '../../core/api/api_endpoints.dart';
 import '../../widgets/bottom_nav.dart';
 import '../../services/auth_service.dart';
+import '../../services/certificates_service.dart';
+import '../../services/courses_service.dart';
 import '../../services/exams_service.dart';
+import '../../services/live_courses_service.dart';
 import '../../services/profile_service.dart';
 import '../../l10n/app_localizations.dart';
 
@@ -27,6 +30,9 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _statistics;
   int _myEnteredExamsCount = 0;
+  int? _enrolledCoursesCountOverride;
+  int? _certificatesCountOverride;
+  int? _liveSessionsCountOverride;
 
   @override
   void initState() {
@@ -39,12 +45,38 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     try {
       final profileFuture = ProfileService.instance.getProfile();
       final myExamsFuture = ExamsService.instance.getMyExams();
+      final enrollmentsFuture = CoursesService.instance.getEnrollments(
+        status: 'all',
+        page: 1,
+        perPage: 1,
+      );
+      final certificatesFuture = CertificatesService.instance.getCertificates();
+      final liveSessionsFuture =
+          LiveCoursesService.instance.getLiveCourses(requireAuth: true);
       final profile = await profileFuture;
       Map<String, dynamic>? myExamsResponse;
+      Map<String, dynamic>? enrollmentsResponse;
+      Map<String, dynamic>? certificatesResponse;
+      Map<String, dynamic>? liveSessionsResponse;
       try {
         myExamsResponse = await myExamsFuture;
       } catch (_) {
         myExamsResponse = null;
+      }
+      try {
+        enrollmentsResponse = await enrollmentsFuture;
+      } catch (_) {
+        enrollmentsResponse = null;
+      }
+      try {
+        certificatesResponse = await certificatesFuture;
+      } catch (_) {
+        certificatesResponse = null;
+      }
+      try {
+        liveSessionsResponse = await liveSessionsFuture;
+      } catch (_) {
+        liveSessionsResponse = null;
       }
       if (kDebugMode) {
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -76,10 +108,57 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
         }
       }
 
+      int? enrolledCoursesCount;
+      if (enrollmentsResponse != null) {
+        final meta = enrollmentsResponse['meta'];
+        if (meta is Map<String, dynamic>) {
+          final total = meta['total'] ??
+              meta['total_enrolled'] ??
+              meta['total_courses'] ??
+              meta['count'];
+          if (total is num) enrolledCoursesCount = total.toInt();
+          if (total is String) enrolledCoursesCount = int.tryParse(total);
+        }
+        if (enrolledCoursesCount == null) {
+          final data = enrollmentsResponse['data'];
+          if (data is List) {
+            enrolledCoursesCount = data.length;
+          } else if (data is Map<String, dynamic>) {
+            final courses = data['courses'];
+            if (courses is List) enrolledCoursesCount = courses.length;
+          }
+        }
+      }
+
+      int? certificatesCount;
+      if (certificatesResponse != null) {
+        final data = certificatesResponse['data'];
+        if (data is List) {
+          certificatesCount = data.length;
+        } else if (data is Map<String, dynamic>) {
+          final nested = data['certificates'] ?? data['items'] ?? data['data'];
+          if (nested is List) certificatesCount = nested.length;
+        }
+      }
+
+      int? liveSessionsCount;
+      if (liveSessionsResponse != null) {
+        final upcoming = liveSessionsResponse['upcoming'];
+        final liveNow = liveSessionsResponse['live_now'];
+        final past = liveSessionsResponse['past'];
+        final upcomingCount = upcoming is List ? upcoming.length : 0;
+        final liveNowCount = liveNow is List ? liveNow.length : 0;
+        final pastCount = past is List ? past.length : 0;
+        liveSessionsCount = upcomingCount + liveNowCount + pastCount;
+      }
+
       setState(() {
         _profile = profile;
         _statistics = profile['statistics'] as Map<String, dynamic>?;
         _myEnteredExamsCount = enteredExamsCount;
+        _enrolledCoursesCountOverride = enrolledCoursesCount;
+        _certificatesCountOverride = certificatesCount;
+        _liveSessionsCountOverride = liveSessionsCount;
         _isLoading = false;
       });
     } catch (e) {
@@ -210,8 +289,10 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
       ),
     );
 
-    final enrolledCourses = _statistics?['enrolled_courses'] ?? 0;
-    final certificates = _statistics?['certificates_earned'] ?? 0;
+    final enrolledCourses =
+        _enrolledCoursesCountOverride ?? (_statistics?['enrolled_courses'] ?? 0);
+    final certificates =
+        _certificatesCountOverride ?? (_statistics?['certificates_earned'] ?? 0);
     final totalHours = _statistics?['total_learning_hours'] ?? 0;
     final l10n = AppLocalizations.of(context)!;
 
@@ -221,15 +302,6 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
 
     // Build all menu items
     final allMenuItems = [
-      {
-        'icon': Icons.menu_book_rounded,
-        'label': l10n.enrolledLessons,
-        'subtitle': l10n.activeCourse(enrolledCourses),
-        'color': const Color(0xFF0C52B3),
-        'bgColor': const Color(0xFFE7F0FB),
-        'onTap': () => context.push(RouteNames.enrolled),
-        'showFor': ['online', 'offline'], // Show for both
-      },
       {
         'icon': Icons.assignment_rounded,
         'label': l10n.myExams,
@@ -246,7 +318,13 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
       {
         'icon': Icons.videocam_rounded,
         'label': l10n.liveCourses,
-        'subtitle': l10n.comingSoon,
+        'subtitle': _liveSessionsCountOverride != null
+            ? (_liveSessionsCountOverride == 0
+                ? l10n.comingSoon
+                : (_liveSessionsCountOverride == 1
+                    ? '1 live session'
+                    : '${_liveSessionsCountOverride!} live sessions'))
+            : l10n.comingSoon,
         'color': const Color(0xFF10B981),
         'bgColor': const Color(0xFFD1FAE5),
         'onTap': () => context.push(RouteNames.liveCourses),
@@ -269,28 +347,6 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
         'bgColor': const Color(0xFFDBEAFE),
         'onTap': () => context.push(RouteNames.downloads),
         'showFor': ['online'], // Only for online
-      },
-      {
-        'icon': Icons.qr_code_scanner_rounded,
-        'label': l10n.centerAttendance,
-        'subtitle': l10n.scanQrCodeInstruction,
-        'color': const Color(0xFF1D6FD6),
-        'bgColor': const Color(0xFFDCEAFE),
-        'onTap': () => context.push(RouteNames.centerAttendance),
-        'showFor': ['offline'], // Only for offline
-      },
-      {
-        'icon': Icons.chat_bubble_rounded,
-        'label': Localizations.localeOf(context).languageCode == 'ar'
-            ? 'المحادثات'
-            : 'Chat',
-        'subtitle': Localizations.localeOf(context).languageCode == 'ar'
-            ? 'تواصل مع المعلمين'
-            : 'Message teachers',
-        'color': AppColors.purple,
-        'bgColor': AppColors.purple.withOpacity(0.12),
-        'onTap': () => context.push(RouteNames.chatConversations),
-        'showFor': ['online', 'offline'], // Show for both
       },
       {
         'icon': Icons.settings_rounded,

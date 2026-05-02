@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/design/app_colors.dart';
 import '../core/design/app_text_styles.dart';
-import '../core/design/app_radius.dart';
-import '../core/design/app_shadows.dart';
 
 /// Course Card Widget - Pixel-perfect match to React version
 /// Matches: components/screens/home-screen.tsx featured courses
@@ -175,7 +173,7 @@ class CourseCard extends StatelessWidget {
                             : '${price.toStringAsFixed(0)} جنيه',
                         style: AppTextStyles.bodyMedium(
                           color: isFree == true
-                              ? AppColors.orange
+                              ? const Color(0xFF10B981)
                               : AppColors.purple,
                         ).copyWith(fontWeight: FontWeight.bold),
                       ),
@@ -285,7 +283,7 @@ class CourseCard extends StatelessWidget {
                             : '${price.toStringAsFixed(0)} جنيه',
                         style: AppTextStyles.bodySmall(
                           color: isFree == true
-                              ? AppColors.orange
+                              ? const Color(0xFF10B981)
                               : AppColors.purple,
                         ).copyWith(fontWeight: FontWeight.bold),
                       ),

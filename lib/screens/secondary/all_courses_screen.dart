@@ -657,6 +657,8 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
     final priceValue = tryParseCourseNum(course['price']) ?? 0;
     final isFree = courseIsEffectivelyFree(course);
     final hasPricePlans = courseHasSubscriptionPlans(course);
+    final hidePriceBadge = courseHasPlansWithZeroBasePrice(course);
+    final showPriceBadge = !hidePriceBadge;
     final isAr = Localizations.localeOf(context).languageCode == 'ar';
     final currencyCode =
         course['currency']?.toString().toUpperCase() == 'USD' ? 'USD' : 'EGP';
@@ -786,42 +788,42 @@ class _AllCoursesScreenState extends State<AllCoursesScreen> {
                     ),
                   ),
                 // Price Badge
-                Positioned(
-                  top: 8,
-                  left: 8,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      gradient: isFree
-                          ? const LinearGradient(
-                              colors: [Color(0xFF10B981), Color(0xFF059669)])
-                          : const LinearGradient(
-                              colors: [Color(0xFFF59E0B), Color(0xFFD97706)]),
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Text(
-                      isFree
-                          ? context.l10n.free
-                          : (priceBadgeText ??
-                              context.l10n.notAvailableShort),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.cairo(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
+                if (showPriceBadge)
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        gradient: isFree
+                            ? const LinearGradient(
+                                colors: [Color(0xFF10B981), Color(0xFF059669)])
+                            : const LinearGradient(
+                                colors: [Color(0xFFF59E0B), Color(0xFFD97706)]),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        isFree
+                            ? context.l10n.free
+                            : (priceBadgeText ?? context.l10n.notAvailableShort),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.cairo(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white),
+                      ),
                     ),
                   ),
-                ),
                 if (hasPricePlans)
                   Positioned(
                     right: 8,

@@ -2054,6 +2054,10 @@
   "@remindMe": {
     "description": "Remind Me"
   },
+  "enterTheSession": "Enter the session",
+  "@enterTheSession": {
+    "description": "Button shown when a live session is available to join"
+  },
   "joinNow": "Join Now",
   "@joinNow": {
     "description": "Join Now"

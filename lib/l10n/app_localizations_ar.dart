@@ -1449,6 +1449,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get remindMe => 'تذكيري';
 
   @override
+  String get enterTheSession => 'ادخل الجلسة';
+
+  @override
   String get joinNow => 'انضم الآن';
 
   @override

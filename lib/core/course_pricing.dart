@@ -97,6 +97,7 @@ bool courseHasPaidAmount(Map<String, dynamic> course) {
   return (hasSingleCurrency && (singleFinalAmount ?? 0) > 0) ||
       (finalEgp != null && finalEgp > 0) ||
       (finalUsd != null && finalUsd > 0) ||
+      courseHasSubscriptionPlans(course) ||
       hasPaidPlan ||
       priceValue > 0;
 }
@@ -262,6 +263,14 @@ void _pickAmountFromPricingMap(
 
   _pickAmountFromPricingMap(course, onPick);
   return (currency: currency, amount: amount);
+}
+
+/// True when the course has subscription plans but no standalone full-course
+/// amount to display.
+bool courseHasPlansWithZeroBasePrice(Map<String, dynamic> course) {
+  if (!courseHasSubscriptionPlans(course)) return false;
+  final total = parseCourseTotalPricing(course).amount;
+  return total <= 0;
 }
 
 /// Ensures checkout payload does not carry stale selected plan

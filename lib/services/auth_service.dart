@@ -658,7 +658,7 @@ class AuthService {
           throw Exception('فشل مصادقة Google (ApiException: 12500).\n'
               'السبب غالبا إعدادات Firebase/OAuth غير متطابقة.\n'
               'يرجى التأكد من:\n'
-              '1. package name = com.anmka.drchampions\n'
+              '1. package name = com.anmka.drchampion\n'
               '2. إضافة SHA-1 الصحيحة لهذا الجهاز في Firebase\n'
               '3. عدم وجود تعارض لنفس package+SHA في مشروع Google آخر\n'
               '4. تنزيل google-services.json الجديد بعد الحفظ');

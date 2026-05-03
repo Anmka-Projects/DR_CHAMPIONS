@@ -1,4 +1,4 @@
-package com.anmka.drchampions
+package com.anmka.drchampion
 
 import io.flutter.embedding.android.FlutterActivity
 

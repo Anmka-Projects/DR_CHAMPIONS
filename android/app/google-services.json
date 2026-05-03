@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:322915697:android:86f73233f2d9b52c713ad0",
         "android_client_info": {
-          "package_name": "com.anmka.drchampions"
+          "package_name": "com.anmka.drchampion"
         }
       },
       "oauth_client": [
@@ -17,7 +17,7 @@
           "client_id": "322915697-9a551dgead8gkcpm6f21ue85ukv0pg4r.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.anmka.drchampions",
+            "package_name": "com.anmka.drchampion",
             "certificate_hash": "3e782b2e1154b0abec44cc855260fb59836f99ac"
           }
         },
@@ -25,7 +25,7 @@
           "client_id": "322915697-iiklmhs5ifb0jn3eva9n0sj0scp65c7m.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.anmka.drchampions",
+            "package_name": "com.anmka.drchampion",
             "certificate_hash": "d19172dae60d5d342bcdd5c9c57e331a58a0c6b4"
           }
         },

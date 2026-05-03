@@ -1,5 +1,6 @@
 import 'dart:developer';
 import 'package:educational_app/core/notification_service/notification_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -11,6 +12,16 @@ import 'core/config/theme_provider.dart';
 import 'l10n/app_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+
+/// Release builds: pass `--dart-define=ALLOW_SCREENSHOT=true` when you need
+/// Play Store screenshots from a **release** APK/AAB. Otherwise release keeps
+/// protection on.
+const bool kAllowScreenshotsForStore =
+    bool.fromEnvironment('ALLOW_SCREENSHOT', defaultValue: false);
+
+/// Block capture only in **release** builds (not debug/profile), unless overridden.
+bool get _shouldEnableScreenProtection =>
+    kReleaseMode && !kAllowScreenshotsForStore;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,12 +40,22 @@ void main() async {
   await FirebaseNotification.initializeNotifications();
   log('FCM Token: ${FirebaseNotification.fcmToken}');
 
-  // Initialize screen protection (prevent screenshots and screen recording)
+  // Screen protection: ON for release only (debug always allows screenshots).
+  // Release + ALLOW_SCREENSHOT=true → off (for store listing captures).
   try {
-    await ScreenProtector.protectDataLeakageOn();
-    await ScreenProtector.preventScreenshotOn();
+    if (_shouldEnableScreenProtection) {
+      await ScreenProtector.protectDataLeakageOn();
+      await ScreenProtector.preventScreenshotOn();
+    } else {
+      await ScreenProtector.preventScreenshotOff();
+      await ScreenProtector.protectDataLeakageOff();
+      debugPrint(
+        kAllowScreenshotsForStore
+            ? 'Screen protection: OFF (ALLOW_SCREENSHOT release build)'
+            : 'Screen protection: OFF (non-release build)',
+      );
+    }
   } catch (e) {
-    // Log error but don't prevent app from running
     debugPrint('Screen protection initialization error: $e');
   }
 
